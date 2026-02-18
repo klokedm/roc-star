@@ -5,7 +5,7 @@ def epoch_update_gamma(y_true,y_pred, epoch=-1,delta=1):
         y_true: `Tensor`. Targets (labels).  Float either 0.0 or 1.0 .
         y_pred: `Tensor` . Predictions.
         """
-        DELTA = delta  # Fixed: was delta+1, should be delta per README line 129
+        DELTA = delta  # Fixed: was delta+1, should be delta per Yan et al. 2003 (proportional margin parameter)
         SUB_SAMPLE_SIZE = 2000.0
         pos = y_pred[y_true==1]
         neg = y_pred[y_true==0] # yo pytorch, no boolean tensors or operators?  Wassap?

@@ -8,7 +8,7 @@ This document defines the operational discipline, attribution practices, and qua
 ### 1. Toggle Discipline
 - All feature flags, experimental code, and conditional logic must be clearly documented
 - Configuration options should have safe defaults
--Togglable features must not break baseline behavior when disabled
+- Togglable features must not break baseline behavior when disabled
 - Document the purpose and impact of each toggle in code comments
 
 ### 2. Attribution Preservation
