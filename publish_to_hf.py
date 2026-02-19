@@ -22,7 +22,6 @@ Environment variables:
 """
 
 import argparse
-import io
 import os
 import pickle
 import sys
@@ -36,8 +35,7 @@ import pyarrow.parquet as pq
 import requests
 
 try:
-    from huggingface_hub import HfApi, DatasetCard, DatasetCardData
-    from datasets import Dataset, DatasetDict, Features, Sequence, Value
+    from huggingface_hub import HfApi
 except ImportError:
     print("ERROR: Required packages missing. Run:")
     print("  pip install huggingface_hub datasets pyarrow numpy requests")
