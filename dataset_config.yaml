@@ -1,0 +1,20 @@
+# dataset_config.yaml
+# Hugging Face dataset viewer configuration for klokedm/roc-star-extended
+#
+# This file tells the HF data viewer how to display the dataset splits and features.
+# It is uploaded alongside README.md and the data files by publish_to_hf.py.
+
+configs:
+  - config_name: default
+    data_files:
+      - split: train
+        path: data/train-*.parquet
+      - split: validation
+        path: data/validation-*.parquet
+    features:
+      tokens:
+        dtype: sequence
+        feature:
+          dtype: int32
+      label:
+        dtype: float32
