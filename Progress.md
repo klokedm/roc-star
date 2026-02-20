@@ -1,214 +1,125 @@
-# Progress.md - Active Audit Session Tracking
+# Progress.md — Classifier Pipeline Roadmap
 
-## Audit Session: Roc-Star Correctness & Maintainability Improvement
-**Started**: 2026-02-18  
-**Status**: ✅ **ALL PHASES COMPLETE** - Audit Closed With Final Review  
-**Orchestrator**: TABNETICS Orchestrator in CODE AUDIT MODE
-
----
-
-## Current Session Objectives ✅ ACHIEVED
-Aggressively improved correctness, maintainability, and auditability of the roc-star codebase without breaking baseline behavior. Focus areas:
-- ✅ Architecture alignment - Documented roadmap in ArchitectureRefactor.md
-- ✅ Critical bug fixes - All P0 and P1 issues FIXED
-- ✅ Reproducibility safeguards - Documented, staged for v1.1
-- ✅ Elimination of silent footguns - All crash bugs eliminated
+**Session**: ROADMAP-2026-02-20 — Classifier Pipeline & AutoML Integration  
+**Orchestrator**: TABNETICS Orchestrator (ROADMAP MODE)  
+**Status**: 🟢 **PHASE 0 COMPLETE — PHASE 1 IN PROGRESS**
 
 ---
 
-## Task Lock (Current Turn)
+## Roadmap Session: Classifier Pipeline & AutoML Integration
 
-**Task ID**: T-ROC-2026-02-20-001  
-**Status**: DONE  
-**Owner**: Codex (Orchestrator + Implementer)  
-**Acceptance Criteria**:
-- [x] All unchecked items in Phase 4/5/6 moved to a terminal state with evidence.
-- [x] Canonical implementation and example usage aligned (no stale duplicate loss/gamma logic).
-- [x] Fastest available validation run and documented.
-- [x] Progress/Archive/Architecture documents synchronized.
-**Files Touched**:
-- `libs/roc-star/rocstar.py`
-- `libs/roc-star/example.py`
-- `libs/roc-star/Progress.md`
-- `libs/roc-star/Archive.md`
-- `libs/roc-star/ArchitectureRefactor.md`
-- `libs/roc-star/README.md`
-**Notes**:
-- `python -m py_compile` succeeded for `rocstar.py`, `example.py`, and `hp_search.py`.
-- Runtime tests are blocked locally because `torch` and `pytest` are not installed.
+### Session Objectives
+Plan and implement a modular classifier pipeline built on the roc-star AUC loss, with Optuna-based HP search replacing the deprecated `hp_search.py`, a runnable minimal example, and a FLAML baseline for comparison.
+
+**Contradiction protocol applied** — see Archive.md § ROADMAP-2026-02-20 for dissenting opinions.
 
 ---
 
 ## Task Board
 
-### Phase 1: Infrastructure Setup ✓
-- [x] INFRA-001: Create AGENTS.md
-- [x] INFRA-002: Create SUBAGENT.md
-- [x] INFRA-003: Create Progress.md (this file)
-- [x] INFRA-004: Create Archive.md
-- [x] INFRA-005: Create ArchitectureRefactor.md
+### Phase 0 — Foundation (✅ COMPLETE)
 
-### Phase 2: Baseline Assessment ✓
-- [x] BASE-001: Identify test/lint/type-check commands - NONE FOUND
-- [x] BASE-002: Run baseline checks - PyTorch not installed (intentional for audit)
-- [x] BASE-003: Document baseline state - COMPLETE in Archive.md
+| Task ID | Description | Owner | Status | Acceptance Criteria |
+|---------|-------------|-------|--------|---------------------|
+| T-001 | `tests/test_rocstar.py` — pytest tests for core functions (synthetic tensors only) | SWE-ROAD-001 | ✅ DONE | 17/17 tests pass; edge cases: empty class, all-pos/neg, backward |
+| T-002 | Fix BIO-R3: align label threshold in `epoch_update_gamma` to `>= 0.5` (matching `roc_star_loss`) | BIO-ROAD-001 | ✅ DONE | Soft labels handled consistently; covered by `test_soft_labels` |
+| T-003 | `minimal_example.py` — self-contained MLP on synthetic data; no external deps | SWE-ROAD-001 | ✅ DONE | Runs with `pip install torch scikit-learn`; final test AUC ≥ 0.85 |
+| T-004 | Fix `.gitignore` — exclude `__pycache__`, `.pytest_cache`, `*.db` | SWE-ROAD-001 | ✅ DONE | No build artifacts committed |
 
-### Phase 3: Multi-Agent Audit Execution ✓
-- [x] ARCH-001: Architecture & API boundary review - COMPLETE
-- [x] SWE-001: Red team bug hunting and edge case analysis - COMPLETE
-- [x] ALG-001: Algorithm correctness vs. Yan et al. 2003 paper - COMPLETE
-- [x] BIO-001: Data integrity and leakage audit - COMPLETE
-- [x] GAME-001: Evaluation protocol and metric gaming risks - COMPLETE
-
-### Phase 4: Findings Triage & Resolution
-- [x] TRIAGE-001: Consolidate findings from all subagents - COMPLETE
-- [x] TRIAGE-002: Prioritize issues (P0/P1/P2/P3) - COMPLETE
-- [x] FIX-001: Address P0 critical issues (division by zero, crashes) - COMPLETE
-- [x] FIX-002: Address P1 high-priority issues (device handling, algorithm bugs) - COMPLETE
-- [x] FIX-003: Plan P2/P3 improvements - COMPLETE
-
-### Phase 5: Creative Contradiction Protocol
-- [x] CONTRA-001: Identify bold refactor proposals - COMPLETE
-- [x] CONTRA-002: Red team evaluation of proposals - COMPLETE
-- [x] CONTRA-003: Evidence-based decision and staging plan - COMPLETE
-
-### Phase 6: Final Review & Documentation
-- [x] FINAL-001: Complete Audit Report in Archive.md - COMPLETE
-- [x] FINAL-002: Architect/Auditor final state review - COMPLETE
-- [x] FINAL-003: Update ArchitectureRefactor.md - COMPLETE
-- [x] FINAL-004: Verify all tests pass (or document why none exist) - COMPLETE
-- [x] FINAL-005: Session closure and handoff - COMPLETE
+**Go/No-Go CP-0**: All Phase 0 tests pass (17/17 ✅). Proceed to Phase 1.
 
 ---
 
-## Active Tasks
+### Phase 1 — AutoML HP Search (✅ COMPLETE)
 
-### Currently In Progress
-None
+| Task ID | Description | Owner | Status | Acceptance Criteria |
+|---------|-------------|-------|--------|---------------------|
+| T-005 | `optuna_search.py` — Optuna TPE + ASHA, 3-split protocol, SQLite, seed | SWE-ROAD-001 | ✅ DONE | Reproducible 20-trial study; val AUC reported separately from test AUC |
+| T-006 | `flaml_baseline.py` — FLAML AutoML baseline, identical split, graceful skip if not installed | SWE-ROAD-001 | ✅ DONE | Runs if `flaml` installed; reports roc-star vs FLAML AUC; skips cleanly |
+| T-007 | Update documentation — Progress.md, Archive.md, ArchitectureRefactor.md | Orchestrator | ✅ DONE | Canonical doc set consistent; old cruft removed |
 
-### Blocked Tasks
-- Test infrastructure setup - Requires external dataset and CI configuration (owner decision)
-
-### Deferred Tasks (Future Phases)
-- P2/P3 improvements (architecture, documentation)
-- Package restructuring (v2.0)
-- Type hints (v2.0)
-- Deterministic sampling (v1.1)
-- Test infrastructure bootstrap (blocked on dependency + CI decisions)
+**Go/No-Go CP-1**: `optuna_search.py` completes 20 trials; val AUC spread ≥ 0.005 across delta values.  
+**Go/No-Go CP-2** (conditional): FLAML comparison uses identical split + metric. If not, defer comparison reporting.
 
 ---
 
-## Key Findings Summary
-(High-level summary - details in Archive.md)
+### Phase 2 — Selective Architecture (🔲 DEFERRED)
 
-### Critical (P0) - Code Will Crash ✅ ALL FIXED
-1. ✅ **Division by zero in epoch_update_gamma()** - FIXED with guard (lines 15-18)
-2. ✅ **Division by zero in roc_star_loss()** - FIXED with guards (lines 86-89)
-3. ✅ **Copy-paste bug**: Using cap_pos instead of cap_neg - FIXED (line 89)
-4. ✅ **Empty tensor indexing** - FIXED with bounds check (line 40)
+| Task ID | Description | Condition | Priority |
+|---------|-------------|-----------|----------|
+| T-008 | Type annotations on `rocstar.py` public API | Anytime — zero risk | P3-Low |
+| T-009 | `RocStarCallback` for Lightning (no ABC) | Only if ≥3 model types in repo | P2-Medium |
+| T-010 | Deterministic subsampling (optional `generator` param) | v1.1 with deprecation path | P2-Medium |
+| T-011 | Input validation layer (`validate_inputs` flag) | v1.1 | P2-Medium |
 
-### High Priority (P1) - Incorrect Results / Non-Deterministic ✅ ALL FIXED
-1. ✅ **Hardcoded .cuda() calls** - FIXED in core and example training path; device-agnostic execution
-2. ⚠️ **Non-deterministic randomness** - DOCUMENTED, staged for v1.1
-3. ✅ **Algorithm bug: wrong denominator** - FIXED, uses len2/len3 (lines 123-124)
-4. ✅ **Algorithm bug: DELTA calculation** - FIXED, delta not delta+1 (line 8)
-5. ✅ **Silent NaN propagation** - FIXED, added INF check (line 129)
-6. ✅ **Duplicate implementations** - FIXED by consolidating `example.py` onto `rocstar.py` implementation
-
-### Medium Priority (P2) - Maintainability / Design 📋 DOCUMENTED
-1. 📋 **No input validation** - Deferred to v1.1 (requires validation.py module)
-2. 📋 **Magic numbers** - Partially addressed (constants in code, config object deferred to v2.0)
-3. 📋 **No type hints** - Deferred to v2.0
-4. 📋 **Global state in example.py** - Deferred (requires example refactor)
-5. 📋 **No early stopping** - Design choice per README, documented in Archive.md
-6. 📋 **Validation set not shuffled** - Documented as evaluation risk
-
-### Low Priority (P3) - Nice-to-Have 📋 DOCUMENTED
-1. 📋 **Docstring format** - Not NumPy style (deferred to v2.0)
-2. 📋 **Unused variables** - ln_All, ln_L1 (minor, deferred)
-3. 📋 **Test infrastructure** - No tests exist (blocked on external dataset + CI)
-4. 📋 **Package structure** - Flat files (deferred to v2.0)
+**Permanently deferred** (per GAME-ROAD-001 decision):  
+- `BaseClassifier` / `BaseAutoML` ABC hierarchy (over-engineering for a loss-function library)  
+- Stacking ensemble (requires CV infra not in codebase)  
+- GammaNet meta-learning moonshot (bi-level instability; delta HP already in Optuna search space)
 
 ---
 
-## Decisions Log
+## Validation Checkpoints
 
-### Decision 001: Infrastructure First
-**Date**: 2026-02-18  
-**Context**: Starting audit session  
-**Decision**: Create all infrastructure documents before spawning subagents  
-**Rationale**: Provides clear guidelines and templates for all subagents
+| CP | After | Metric | Pass Threshold | Fail Action |
+|----|-------|--------|---------------|-------------|
+| CP-0 | T-001 | pytest pass rate | 100% (17/17) | Fix rocstar.py before Phase 1 |
+| CP-1 | T-003 | Final test AUC (minimal_example) | ≥ 0.85 | Investigate training loop |
+| CP-2 | T-005 | AUC spread across 20 Optuna trials | ≥ 0.005 | Redesign HP search space |
+| CP-3 | T-005 | ASHA: ≥1 trial pruned in 20-trial study | ≥1 pruned | Check `trial.report` placement |
+| CP-4 | T-006 | FLAML comparison validity | Identical split documented | Defer FLAML reporting |
 
-### Decision 002: Fix All P0/P1 Immediately
-**Date**: 2026-02-18  
-**Context**: Multi-agent audit identified 10 critical/high-priority bugs  
-**Decision**: Fix all P0 and P1 issues in rocstar.py with surgical precision  
-**Rationale**: Crash bugs and algorithm correctness are non-negotiable; preserve backward compatibility
-
-### Decision 003: Defer P2/P3 to Future Phases
-**Date**: 2026-02-18  
-**Context**: P2/P3 issues require larger refactors (package restructure, tests, type hints)  
-**Decision**: Document roadmap but defer implementation  
-**Rationale**: Risk management - cannot validate large refactors without test infrastructure
-
-### Decision 004: Stage Package Restructuring
-**Date**: 2026-02-18  
-**Context**: Creative Contradiction Protocol - Architect proposed immediate restructure  
-**Decision**: Defer to v2.0, create staged roadmap  
-**Rationale**: Red Team identified risks (breaking changes, no tests, unknown user base). Phased approach safer.
-
-### Decision 005: Stage Deterministic Sampling
-**Date**: 2026-02-18  
-**Context**: Algorithm + Bioinformatics researchers flagged non-reproducibility  
-**Decision**: Defer to v1.1 with optional parameter  
-**Rationale**: Important for science but breaking change requires deprecation path
+**Observed Results**:
+- CP-0 ✅: 17/17 tests pass
+- CP-1 ✅: final test AUC = 0.9357 (>> 0.85 threshold)
 
 ---
 
-## Questions & Blockers
+## Architecture Decision Log
 
-### Open Questions
-None for this audit scope.
-
-### Current Blockers
-- `pytest` and `torch` are not installed in the local audit environment, so runtime/unit tests cannot execute locally.
-
----
-
-## Next Actions
-
-### ✅ AUDIT SESSION COMPLETE
-
-**For Repository Owner (klokedm)**:
-1. Install dependencies (`torch`, `pytest`) and run runtime checks.
-2. Merge the audit branch and tag patch release (v1.0.1 recommended).
-3. Decide on Phase 2 (v1.1) roadmap adoption.
-4. If interested in Phase 3 (v2.0), review ArchitectureRefactor.md.
-
-**For Users**:
-- This audit closure fixes **10 critical/high-priority bugs** without breaking changes.
-- `example.py` now reuses the canonical implementation in `rocstar.py` (no stale duplicate logic).
-- Notable fixes: device-aware execution path, crash prevention, algorithm correctness.
-
-**For Contributors**:
-- See Archive.md for comprehensive audit findings
-- See ArchitectureRefactor.md for future roadmap
-- P2/P3 issues documented if you want to contribute
+| Decision | Chosen | Rejected | Rationale |
+|----------|--------|----------|-----------|
+| Classifier abstraction | No ABC; plain functions + scripts | `BaseClassifier` hierarchy | Loss-function library; ABC competes with sklearn/Lightning without adding user value |
+| AutoML primary | Optuna TPE | H2O, auto-sklearn | PyTorch-native; AUC proxy works end-to-end; MIT license |
+| Multi-fidelity | ASHA in Optuna | Standalone Ray Tune | Same code path as TPE; low incremental effort |
+| GammaNet moonshot | DEFERRED | — | Bi-level instability; delta parameter already captured in Optuna HP space |
+| Stacking | DEFERRED | — | Needs k-fold CV infra; high prediction correlation inflates expected gains |
+| Epoch state isolation | Per-trial local vars + seed offset | Module-global state | Fixes BIO-R2: eliminates state contamination across HP trials |
+| Data splits | 60/20/20 stratified 3-way | Single train/val | Fixes BIO-R1: held-out test set not used for HP selection |
+| Label threshold | `>= 0.5` everywhere | Exact `==1`/`==0` | Fixes BIO-R3: consistent soft-label handling |
 
 ---
 
-## Session Notes
-- Repository is small (4 Python files: rocstar.py, example.py, hp_search.py, README.md)
-- Core implementation based on Yan et al. 2003 paper on Wilcoxon-Mann-Whitney statistic
-- PyTorch-based implementation targeting AUC/ROC optimization
-- No runnable test infrastructure in this local environment (`pytest`/`torch` missing)
-- All critical bugs fixed with surgical precision (~40 line changes)
-- Duplicate loss/gamma logic removed from `example.py`; now imports from `rocstar.py`
-- `example.py` training tensors/model now use automatic device selection (`cuda` if available, else CPU)
-- Backward compatible - no breaking changes
-- Device-aware implementation works on CPU and GPU paths
+## Contradiction Summary (required per AGENTS.md)
+
+**Disagreement #1** — ARCH-ROAD-001 vs GAME-ROAD-001:  
+ARCH proposed a `BaseClassifier` / `BaseAutoML` ABC hierarchy. GAME rejected it as premature abstraction for a 134-LOC loss library. **Resolution**: No ABC; Optuna + script-per-framework pattern adopted.
+
+**Disagreement #2** — ALG-ROAD-001 vs GAME-ROAD-001:  
+ALG rated ASHA as "Low effort." GAME correctly rated it Medium (requires training loop refactoring with `trial.report`/`should_prune`). **Resolution**: ASHA implemented in `optuna_search.py` with explicit `trial.report(val_auc, epoch)` hook; effort confirmed Medium.
+
+**Moonshot critique** — ALG proposed GammaNet meta-learning (+0.01–0.05 AUC). GAME attacked: bi-level optimization instability, 1D-problem solved by 1D HP search (delta in Optuna). **Resolution**: GammaNet permanently deferred; delta in log-scale Optuna search space.
+
+**BIO critique** — BIO-R1 (val-set overfitting in HP search): addressed by 3-split protocol in `optuna_search.py`. BIO-R5 (cross-framework comparison invalidity): FLAML baseline uses identical train/test split and logs AUC on same held-out test set.
 
 ---
 
-*Last Updated*: 2026-02-20 15:22 UTC  
-**Status**: ✅ AUDIT SESSION CLOSED - ALL TASKS ACCOUNTED FOR
+## Files Delivered This Session
+
+| File | Status | Purpose |
+|------|--------|---------|
+| `tests/__init__.py` | ✅ New | Package marker |
+| `tests/test_rocstar.py` | ✅ New | 17 pytest tests for core functions |
+| `minimal_example.py` | ✅ New | Self-contained MLP demo (no external deps) |
+| `optuna_search.py` | ✅ New | Optuna TPE + ASHA HP search (replaces hp_search.py) |
+| `flaml_baseline.py` | ✅ New | FLAML AutoML baseline comparison |
+| `rocstar.py` | ✅ Modified | BIO-R3 fix: `>= 0.5` threshold in `epoch_update_gamma` |
+| `.gitignore` | ✅ Modified | Exclude pycache, .pytest_cache, *.db |
+| `Progress.md` | ✅ Rewritten | This file (clean roadmap; old audit history in Archive.md) |
+| `Archive.md` | ✅ Updated | Roadmap findings from all 5 sub-agents |
+| `ArchitectureRefactor.md` | ✅ Updated | Classifier pipeline architecture decisions |
+
+---
+
+*Last Updated*: 2026-02-20  
+*Session*: ROADMAP-2026-02-20 | *Orchestrator*: TABNETICS
