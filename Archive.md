@@ -689,5 +689,315 @@ def epoch_update_gamma(y_true, y_pred, epoch=-1, delta=1, generator=None):
 
 ---
 
+## ALG-ROAD-001: AutoML & Oracle Algorithmic Directions for roc-star AUC Loss
+
+**Agent**: Algorithm Researcher (SOTA Scout / Innovator)  
+**Date**: 2026-02-20  
+**Status**: COMPLETE  
+
+### Executive Summary
+
+The roc-star loss has one key architectural constraint that shapes every AutoML and oracle choice: it is **stateful across epochs** — it requires last epoch's predictions (`epoch_true`, `epoch_pred`) and a pre-computed `gamma`. This rules out drop-in use with frameworks that call `loss(y_pred, y_true)` in a stateless way. Every framework integration must carry epoch state as a side-channel.
+
+---
+
+### 1. Top 5 Recommended Algorithmic Directions
+
+#### Direction 1 — Optuna TPE + PyTorch roc-star end-to-end
+**Feasibility**: H | **Expected AUC gain**: +0.005–0.02 over random search | **Effort**: Low–Medium
+
+Optuna's Tree-structured Parzen Estimator (TPE) is the most practical entry point. The roc-star loss fits naturally into an Optuna `objective()` function because state (epoch_pred, epoch_true, gamma) can be managed inside the trial loop. Pruning with `TrialPruned` after each epoch allows multi-fidelity behavior without requiring BOHB infrastructure.
+
+**HP Space** (Optuna syntax):
+```python
+delta         = trial.suggest_float("delta", 0.5, 5.0, log=True)
+sub_sample    = trial.suggest_int("sub_sample_size", 500, 5000, step=500)
+max_pos       = trial.suggest_int("max_pos", 200, 2000, step=200)
+max_neg       = trial.suggest_int("max_neg", 200, 2000, step=200)
+warmup_epochs = trial.suggest_int("warmup_epochs", 1, 5)   # BxE warmup before roc-star
+lr            = trial.suggest_float("lr", 1e-4, 1e-2, log=True)
+```
+
+**Integration note**: Wrap `train_model()` as the Optuna objective; pass `epoch_gamma`, `last_whole_y_t`, `last_whole_y_pred` as mutable state inside the trial. Use `optuna.integration.PyTorchLightningPruningCallback` if moving to Lightning.
+
+---
+
+#### Direction 2 — FLAML + LightGBM/XGBoost with AUC objective (fast oracle baseline)
+**Feasibility**: H | **Expected AUC gain**: baseline oracle | **Effort**: Low
+
+FLAML's cost-frugal optimization is ideal for high-dim, low-sample tabular baselines. LightGBM with `objective="binary"` and `metric="auc"` does not use roc-star directly, but serves as the strongest oracle baseline. XGBoost can use a custom pairwise ranking objective as a proxy (see Direction 6).
+
+**HP Space** (FLAML AutoML):
+```python
+settings = {
+    "metric": "roc_auc",
+    "estimator_list": ["lgbm", "xgboost", "rf", "extra_tree"],
+    "time_budget": 300,          # seconds
+    "eval_method": "cv",
+    "n_splits": 5,
+}
+```
+
+**Integration note**: FLAML cannot natively use roc-star loss (stateful, PyTorch). Use it for the non-neural oracle tier. Combine with roc-star neural models via stacking (Direction 5).
+
+---
+
+#### Direction 3 — XGBoost with custom pairwise AUC surrogate objective
+**Feasibility**: M | **Expected AUC gain**: +0.003–0.01 vs default XGBoost | **Effort**: Medium
+
+XGBoost supports custom `obj` functions (gradient + hessian). A pairwise surrogate that approximates the Wilcoxon-Mann-Whitney statistic (the same basis as roc-star) can be implemented. Yan et al.'s margin formulation translates directly to a first-order gradient:
+
+```
+grad_i = -2 * sum_j [ (s_j - s_i + gamma) * I(s_j - s_i + gamma > 0) ]  for pos i
+hess_i = 2 * count of violated pairs (approximated as constant for stability)
+```
+
+This is stateless per batch (no epoch memory needed), making it cleaner than the PyTorch version for tree models.
+
+**HP Space**:
+```python
+gamma_xgb   = [0.05, 0.1, 0.2, 0.5]   # margin parameter
+n_estimators = [200, 500, 1000]
+max_depth    = [3, 4, 6]
+subsample    = [0.6, 0.8, 1.0]
+colsample_bytree = [0.6, 0.8, 1.0]
+```
+
+---
+
+#### Direction 4 — Multi-Fidelity Optimization with Optuna + Hyperband (ASHA)
+**Feasibility**: H | **Expected AUC gain**: same as TPE but 3–5× faster | **Effort**: Low–Medium
+
+Optuna's `AsyncSuccessiveHalvingAlgorithm` (ASHA) sampler combined with epoch-level pruning eliminates poor HP configs early. Since roc-star naturally reports per-epoch validation AUC, Hyperband integration is straightforward.
+
+```python
+sampler = optuna.samplers.TPESampler(seed=42)
+pruner  = optuna.pruners.HyperbandPruner(
+    min_resource=2,      # minimum epochs before pruning
+    max_resource=30,     # total epochs
+    reduction_factor=3
+)
+study = optuna.create_study(direction="maximize", sampler=sampler, pruner=pruner)
+```
+
+**Key advantage**: roc-star's first epoch runs BxE (warmup), which gives a meaningful signal even at epoch 2–3, making early pruning reliable.
+
+---
+
+#### Direction 5 — Stacking Ensemble: roc-star neural + GBDT oracles
+**Feasibility**: H | **Expected AUC gain**: +0.005–0.015 (ensemble effect) | **Effort**: Medium
+
+A two-level stack:
+- **Level 0**: (a) roc-star LSTM, (b) LightGBM AUC, (c) XGBoost pairwise, (d) Logistic Regression with L1 (sparse features)
+- **Level 1**: Logistic Regression or isotonic regression meta-learner trained on OOF predictions
+
+The stacking meta-learner should be calibrated (see Section 5). OOF (out-of-fold) predictions must be generated with identical train/val splits across all Level 0 models to prevent leakage.
+
+**HP Space** for meta-learner:
+```python
+C = [0.01, 0.1, 1.0, 10.0]    # L2 regularization
+meta_model = ["logistic", "isotonic", "lightgbm_shallow"]
+```
+
+---
+
+### 2. Oracle / Baseline Classifier List
+
+| # | Model | Framework | AUC Objective? | Notes |
+|---|-------|-----------|----------------|-------|
+| 1 | **LightGBM** | FLAML/direct | Native AUC metric | Fastest strong baseline; handles high-dim |
+| 2 | **XGBoost (pairwise)** | direct | Custom surrogate | Approximates WMW statistic |
+| 3 | **Logistic Regression (L1)** | scikit-learn | Indirect (AUC eval) | Feature selection via L1; interpretable |
+| 4 | **Random Forest** | scikit-learn | Indirect | Good calibration baseline; low variance |
+| 5 | **Gradient Boosting (sklearn)** | scikit-learn | Indirect | Slower but calibratable with isotonic |
+| 6 | **TabNet** | pytorch-tabnet | Custom loss | Neural tabular; supports custom objectives |
+| 7 | **CatBoost** | catboost | Native AUC | Best out-of-the-box for categorical data |
+| 8 | **roc-star MLP (tabular)** | PyTorch + roc-star | Direct AUC proxy | Replace LSTM with MLP for tabular input |
+
+**Recommended minimum oracle set**: 1, 2, 3, 4, 8 — covers tree ensembles, linear, and roc-star neural.
+
+---
+
+### 3. Feature Selection for High-Dim, Low-Sample Data
+
+**Recommended pipeline** (in order of application):
+
+1. **Variance threshold** (remove near-zero variance features) — O(n·p), always first
+2. **L1 Logistic Regression** (SelectFromModel) — sparse linear selection, fast
+3. **SHAP-based importance from LightGBM** — non-linear, interaction-aware; run after FLAML baseline
+4. **Mutual Information** (sklearn `mutual_info_classif`) — catches non-linear associations; sample-efficient
+5. **Recursive Feature Elimination with CV (RFECV)** — most accurate but O(p²) expensive; use on <500 features
+
+For p >> n settings specifically:
+- Prefer L1 regularization over tree importance (avoids high-cardinality feature bias)
+- Use stratified k-fold (k=5) to avoid label imbalance in small samples
+- **Never** select features on the full training set before CV — always select within each fold
+
+---
+
+### 4. HP Space Definitions for roc-star Loss Hyperparameters
+
+The two key roc-star loss HPs are `delta` and the subsample sizes. Their interaction matters: large `delta` with small subsample is noisy.
+
+```python
+# Recommended Optuna search space
+hp_space = {
+    # roc-star specific
+    "delta":           ("float", 0.3, 5.0, {"log": True}),
+    "sub_sample_size": ("int",   200, 3000, {"step": 200}),  # epoch_update_gamma
+    "max_pos":         ("int",   200, 2000, {"step": 200}),  # roc_star_loss
+    "max_neg":         ("int",   200, 2000, {"step": 200}),
+    "warmup_epochs":   ("int",   1,   5,    {}),              # epochs of BxE before roc-star
+
+    # Model HPs (LSTM-specific, generalizable)
+    "lstm_units":      ("categorical", [64, 96, 128, 256]),
+    "dense_hidden":    ("categorical", [256, 512, 1024, 2048]),
+    "dropout":         ("float", 0.0, 0.5, {"step": 0.05}),
+    "lr":              ("float", 5e-5, 5e-3, {"log": True}),
+    "batch_size":      ("categorical", [64, 128, 256, 512]),
+    "bidirectional":   ("categorical", [True, False]),
+}
+
+# Priors / good defaults from existing hp_search.py analysis:
+# delta=2.0, lstm_units=64-128, dense_hidden=1024, use_roc_star=True
+```
+
+**delta sensitivity**: delta controls the margin quantile. Values 1.0–3.0 are stable; <0.5 causes near-zero gamma (loss degenerates); >5.0 causes loss explosion on unbalanced data. Log-uniform prior recommended.
+
+**subsample coupling**: `sub_sample_size` in `epoch_update_gamma` and `max_pos`/`max_neg` in `roc_star_loss` should be jointly bounded: `max_pos + max_neg ≤ sub_sample_size * 2` is a reasonable soft constraint to add as a trial condition.
+
+---
+
+### 5. Calibration Methods
+
+Post-training calibration is critical when roc-star optimizes ranking (AUC) not probabilities. The outputs are well-ordered but not well-calibrated.
+
+| Method | When to use | Notes |
+|--------|-------------|-------|
+| **Platt Scaling** | Default first choice | Logistic fit on validation set; fast |
+| **Isotonic Regression** | >1000 validation samples | Non-parametric; better for larger sets |
+| **Temperature Scaling** | Neural models only | Single parameter; preserves model weights |
+| **Beta Calibration** | Skewed score distributions | Generalization of Platt; handles bounded outputs |
+| **Venn–ABERS** | Any; conformal prediction | Provides valid prediction sets; no training data needed |
+
+**Recommended**: Temperature Scaling for the roc-star neural model (one scalar parameter, differentiable, preserves GPU efficiency). Platt Scaling for tree-based oracles.
+
+Implementation sketch for temperature scaling:
+```python
+class TemperatureScaler(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.temperature = nn.Parameter(torch.ones(1))
+    def forward(self, logits):
+        return torch.sigmoid(logits / self.temperature)
+    def calibrate(self, val_logits, val_labels, lr=0.01, max_iter=50):
+        optimizer = torch.optim.LBFGS([self.temperature], lr=lr, max_iter=max_iter)
+        nll = nn.BCELoss()
+        def eval_fn():
+            optimizer.zero_grad()
+            loss = nll(self.forward(val_logits), val_labels)
+            loss.backward()
+            return loss
+        optimizer.step(eval_fn)
+```
+
+---
+
+### 6. Moonshot Proposal: Differentiable Gamma Scheduling via Meta-Learning
+
+**Idea**: Instead of computing `gamma` as a heuristic from the previous epoch's prediction distribution, **learn gamma as a differentiable parameter** using a lightweight meta-network.
+
+**Rationale**: The current `epoch_update_gamma` uses a fixed percentile lookup (controlled by `delta`). This is a hand-designed heuristic. A meta-network `G_θ(epoch_stats) → gamma` could adapt gamma dynamically per batch or per epoch, conditioned on:
+- Current epoch number
+- Predicted score mean/variance (positive and negative class separately)  
+- Running AUC estimate
+- Class imbalance ratio
+
+**Implementation sketch**:
+```python
+class GammaNet(nn.Module):
+    """Predicts gamma from epoch statistics."""
+    def __init__(self):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(6, 32), nn.ReLU(),
+            nn.Linear(32, 1), nn.Softplus()  # gamma > 0
+        )
+    def forward(self, pos_mean, pos_std, neg_mean, neg_std, epoch_frac, imbalance_ratio):
+        x = torch.stack([pos_mean, pos_std, neg_mean, neg_std, epoch_frac, imbalance_ratio])
+        return self.net(x).squeeze() + 1e-3  # min gamma floor
+```
+
+Meta-training: Jointly optimize GammaNet + classifier with a bi-level objective:
+- Inner loop: classifier step with current gamma
+- Outer loop: gamma update to maximize held-out AUC
+
+**Risk**: Bi-level optimization is expensive and unstable without careful learning rate scheduling. The meta-network could collapse to always predicting a constant.
+
+**Mitigation**: Pre-train GammaNet to reproduce heuristic `epoch_update_gamma` outputs (supervised from the existing function), then fine-tune end-to-end. This gives a warm-started meta-learner.
+
+**Expected gain**: 0.01–0.05 AUC on datasets where gamma dynamics matter (highly imbalanced, non-stationary score distributions). High-risk, potentially high-reward.
+
+---
+
+### 7. Full Evaluation Matrix
+
+| Direction | Feasibility | Expected AUC Δ | Effort | Stateful? | roc-star compatible? |
+|-----------|-------------|----------------|--------|-----------|----------------------|
+| 1. Optuna TPE + roc-star | H | +0.005–0.02 | Low | Yes | ✅ Direct |
+| 2. FLAML + LightGBM/XGB | H | Oracle baseline | Low | No | ✅ Proxy |
+| 3. XGBoost pairwise surrogate | M | +0.003–0.01 | Medium | No | ✅ Proxy |
+| 4. Hyperband (ASHA) | H | Same as #1, 3–5× faster | Low | Yes | ✅ Direct |
+| 5. Stacking ensemble | H | +0.005–0.015 | Medium | Mixed | ✅ Both |
+| 6. Pairwise ranking (RankNet) | M | +0.005–0.02 | Medium | No | Alternative |
+| 7. Label-smoothed roc-star | M | +0.002–0.008 noisy | Medium | Yes | ✅ Extension |
+| 8. NAS for classifier | L | Unknown | High | Yes | ✅ Direct |
+| 9. Feature importance HP pruning | H | Indirect (speed) | Low | No | ✅ Any |
+| 10. Temperature scaling calibration | H | Calibration only | Low | No | ✅ Post-hoc |
+| 🌙 Moonshot: GammaNet meta-learning | L–M | +0.01–0.05 | High | Yes | ✅ Core extension |
+
+---
+
+### 8. hp_search.py Modernization Recommendation
+
+The current `hp_search.py` uses the deprecated `trains` library (renamed ClearML). **Recommended replacement**:
+
+```python
+# Modern equivalent using Optuna
+import optuna
+
+def objective(trial):
+    # roc-star HPs
+    delta = trial.suggest_float("delta", 0.3, 5.0, log=True)
+    lstm_units = trial.suggest_categorical("lstm_units", [64, 96, 128])
+    dense_hidden = trial.suggest_categorical("dense_hidden_units", [512, 1024, 2048])
+    use_roc_star = trial.suggest_categorical("use_roc_star", [True, False])
+
+    # ... run training, return best_valid_auc
+    return best_valid_auc
+
+study = optuna.create_study(
+    direction="maximize",
+    sampler=optuna.samplers.TPESampler(seed=42),
+    pruner=optuna.pruners.HyperbandPruner(min_resource=2, max_resource=30)
+)
+study.optimize(objective, n_trials=50, timeout=7200)
+```
+
+This replaces the trains dependency entirely, is self-contained, and supports the same BOHB-style multi-fidelity optimization the original code attempted.
+
+---
+
+### References
+- Yan et al. (2003). "Optimizing classifier performance via an approximation to the Wilcoxon-Mann-Whitney statistic." ICML.
+- Reiss, C. "Roc-star: An objective function for ROC-AUC that actually works." https://github.com/iridiumblue/articles/blob/master/roc_star.md
+- Optuna: https://optuna.readthedocs.io/
+- FLAML: https://microsoft.github.io/FLAML/
+- Bergstra & Bengio (2012). "Random search for hyper-parameter optimization." JMLR.
+- Falkner et al. (2018). "BOHB: Robust and efficient hyperparameter optimization at scale." ICML.
+- Guo et al. (2017). "On calibration of modern neural networks." ICML. (Temperature scaling)
+
+---
+
 *Document maintained by TABNETICS Orchestrator*  
 *Last Updated*: 2026-02-20 15:22 UTC

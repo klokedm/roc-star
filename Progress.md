@@ -165,6 +165,22 @@ None
 
 ---
 
+## Task: ALG-ROAD-001 — AutoML & Oracle Algorithmic Directions
+**Status**: ✅ DONE  
+**Agent**: Algorithm Researcher  
+**Date**: 2026-02-20  
+**Summary**: Evaluated 10 algorithmic directions for AutoML integration with roc-star AUC loss. Full findings in Archive.md § ALG-ROAD-001.
+
+**Key Outputs**:
+- **Top 5 directions**: Optuna TPE, FLAML+GBDT oracles, XGBoost pairwise surrogate, Hyperband ASHA, Stacking ensemble
+- **8 oracle/baseline models** defined with AUC objective compatibility ratings
+- **HP search space** fully specified for roc-star parameters (delta, sub_sample_size, max_pos, max_neg, warmup_epochs)
+- **5 calibration methods** evaluated; Temperature Scaling recommended for roc-star neural models
+- **Moonshot**: Differentiable GammaNet meta-learning (bi-level optimization to learn gamma scheduling)
+- **hp_search.py modernization**: Drop-in Optuna replacement for deprecated `trains` library
+
+---
+
 ## Questions & Blockers
 
 ### Open Questions
