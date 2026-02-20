@@ -171,6 +171,6 @@ class TestRocStarLoss:
         y_pred = y_pred.requires_grad_(True)
         epoch_pred = epoch_pred.detach()
         loss = roc_star_loss(y_true, y_pred, gamma, epoch_true, epoch_pred)
-        if loss.item() > 0 and loss.grad_fn is not None:
+        if loss.grad_fn is not None:
             loss.backward()
             assert y_pred.grad is not None

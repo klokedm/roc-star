@@ -211,7 +211,11 @@ def main():
     print("\n" + "=" * 55)
     print("Best trial (by val AUC):")
     print(f"  Val  AUC : {best.value:.4f}")
-    print(f"  Test AUC : {best.user_attrs.get('test_auc', 'n/a'):.4f}")
+    test_auc_attr = best.user_attrs.get('test_auc')
+    if test_auc_attr is not None:
+        print(f"  Test AUC : {test_auc_attr:.4f}")
+    else:
+        print("  Test AUC : n/a")
     print(f"  Params   : {best.params}")
     print("=" * 55)
 
