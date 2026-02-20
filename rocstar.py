@@ -1,3 +1,6 @@
+import torch
+
+
 def epoch_update_gamma(y_true,y_pred, epoch=-1,delta=1):
         """
         Calculate gamma from last epoch's targets and predictions.

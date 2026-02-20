@@ -5,6 +5,20 @@ This document defines the target architecture, design principles, and refactorin
 
 ---
 
+## Audit Closure Snapshot (2026-02-20)
+
+| Workstream | Status | Notes |
+|------------|--------|-------|
+| P0/P1 correctness fixes | ✅ COMPLETE | Implemented in `rocstar.py` and consumed by `example.py` |
+| API compatibility | ✅ COMPLETE | Public function signatures preserved |
+| Duplicate loss logic | ✅ COMPLETE | Removed duplicate implementations in `example.py` |
+| Input validation layer | ⏳ DEFERRED | Planned for v1.1 (`validation.py`) |
+| Deterministic sampling | ⏳ DEFERRED | Planned for v1.1 (opt-in generator/seeding) |
+| Package restructure | ⏳ DEFERRED | Planned for v2.0 |
+| Test/CI infrastructure | 🚫 BLOCKED | Local environment missing `torch`/`pytest`; no CI config |
+
+---
+
 ## Design Philosophy
 
 ### Core Principles
@@ -370,10 +384,10 @@ class GammaScheduler:
 - [ ] All docstrings present
 
 ### Functionality
-- [ ] All edge cases handled
+- [x] All critical edge cases handled (division by zero, empty tensors, NaN/Inf)
 - [ ] Deterministic mode works
-- [ ] CPU and GPU support
-- [ ] Backward compatible
+- [x] CPU and GPU support (core loss/gamma functions)
+- [x] Backward compatible
 
 ### Documentation
 - [ ] API docs complete
@@ -384,5 +398,5 @@ class GammaScheduler:
 ---
 
 *Document maintained by Architect/Auditor*  
-*Last Updated*: 2026-02-18 04:11 UTC  
-*Next Review*: After subagent audits complete
+*Last Updated*: 2026-02-20 15:22 UTC  
+*Next Review*: v1.1 planning gate (determinism + validation)

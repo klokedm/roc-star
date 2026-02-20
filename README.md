@@ -17,6 +17,12 @@ We'd like a loss function that gives us higher scores and less trouble.
 
 We present such a  function here.
 
+## Audit Update (2026-02-20)
+
+- Critical/high-priority correctness issues in `rocstar.py` have been fixed.
+- `example.py` now imports `epoch_update_gamma` and `roc_star_loss` from `rocstar.py` to avoid implementation drift.
+- Full runtime tests require `torch`; local verification without dependencies is limited to syntax checks.
+
 
 ## The Problem : AUC is bumpy
 
@@ -303,5 +309,4 @@ For a faster jump-star you can fork this kernel on Kaggle : [kernel](https://www
 Below we chart the performance of roc-star against the same model using BCE.    Experience shows that roc-star can often simply be swapped into any model using BCE with a good chance at a performance increase.
 
 <img style="max-height:450px; max-width:750px; "  src='https://raw.githubusercontent.com/iridiumblue/about/master/newplot.png' />
-
 
