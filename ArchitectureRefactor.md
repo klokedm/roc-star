@@ -749,24 +749,30 @@ class PipelineConfig:
 
 ---
 
-### Implementation Phasing
+### Implementation Phasing (Updated — ROADMAP-2026-02-20)
 
-| Phase | Deliverable | Prerequisites |
-|-------|-------------|---------------|
-| v1.1 | `rocstar/` package refactor (validation, config, GammaScheduler) | None (ongoing) |
-| v2.0-alpha | `classifier/base.py` + `TorchClassifier` + `LSTMClassifier` (refactored from `example.py`) | v1.1 |
-| v2.0-beta | `SklearnClassifier` + `LightGBMClassifier` + `OptunaAutoML` | v2.0-alpha |
-| v2.0-rc | `FLAMLAutoML` + `RayAutoML` + integration tests | v2.0-beta |
-| v2.0 | Full docs, examples, CI matrix | v2.0-rc |
+| Phase | Deliverable | Prerequisites | Status |
+|-------|-------------|---------------|--------|
+| v1.1 now | `tests/test_rocstar.py`, `minimal_example.py`, `optuna_search.py`, `flaml_baseline.py` | None | ✅ DONE |
+| v1.1 next | Type annotations on `rocstar.py` | None | 🔲 TODO |
+| v1.2 | Deterministic subsampling (optional `generator` param) | v1.1 | 🔲 DEFERRED |
+| v1.2 | Input validation layer (`validate_inputs` flag) | v1.1 | 🔲 DEFERRED |
+| v2.0 | `RocStarCallback` for Lightning (event-based, no ABC) | ≥3 model types | 🔲 DEFERRED |
+| v2.0 | `rocstar/` package refactor (`config.py`, `GammaScheduler`) | v1.2 | 🔲 DEFERRED |
+
+**Permanently deferred** (GAME-ROAD-001 veto, evidence-based):
+- `BaseClassifier` / `BaseAutoML` ABC hierarchy — over-engineering for a loss-function library
+- Stacking ensemble infrastructure — requires k-fold CV; prediction correlation inflates expected AUC gains
+- GammaNet meta-learning — bi-level instability; delta HP already in Optuna 1D search space
 
 ---
 
-*Section added by Architect/Auditor — ARCH-ROAD-001*  
+*Section added by Architect/Auditor — ARCH-ROAD-001; updated by Orchestrator — ROADMAP-2026-02-20*  
 *Date*: 2026-02-20  
-*Review gate*: v2.0-alpha planning
+*Review gate*: v1.2 planning gate (determinism + validation)
 
 ---
 
 *Document maintained by Architect/Auditor*  
-*Last Updated*: 2026-02-20 (ARCH-ROAD-001 classifier pipeline section added)  
-*Next Review*: v1.1 planning gate (determinism + validation)
+*Last Updated*: 2026-02-20 (ROADMAP-2026-02-20 — classifier pipeline decisions finalized; ABC/stacking/GammaNet permanently deferred)  
+*Next Review*: v1.2 planning gate

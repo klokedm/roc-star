@@ -234,8 +234,9 @@ class NeuralNet(nn.Module):
 def train_model(h_params, model, x_train, x_valid, y_train, y_valid,  lr,
                 batch_size=1000, n_epochs=20, title='', graph=''):
     global best_result
-    # Fixed: Use unique checkpoint path per run to prevent cross-trial file overwrites (BIO-R2b)
-    checkpoint_path = os.path.join(gettempdir(), f"roc-star-{title or uuid.uuid4().hex[:8]}.pt")
+    # Fixed: Use unique checkpoint path per run to prevent cross-trial file overwrites (BIO-R2b).
+    # An empty title intentionally falls back to a random suffix so each untitled run has its own file.
+    checkpoint_path = os.path.join(gettempdir(), f"roc-star-{title if title else uuid.uuid4().hex[:8]}.pt")
     device = next(model.parameters()).device
     param_lrs = [{'params': param, 'lr': lr} for param in model.parameters()]
     optimizer = torch.optim.AdamW(param_lrs, lr=h_params.initial_lr,

@@ -677,15 +677,44 @@ def epoch_update_gamma(y_true, y_pred, epoch=-1, delta=1, generator=None):
 - **δ (delta)**: Proportion of too-close pairs to wrong-ordered pairs
 - **p**: Exponent parameter (fixed at 2 in this implementation)
 
-### Appendix C: Test Command Discovery
-- `pytest -q` (preferred once pytest is installed)
-- `python -m compileall libs/roc-star/*.py` (syntax validation fallback)
-- Dependency probe:
-  `python - <<'PY'`
-  `import importlib.util`
-  `print('torch', bool(importlib.util.find_spec('torch')))`
-  `print('pytest', bool(importlib.util.find_spec('pytest')))`
-  `PY`
+### Appendix C: Test Commands (Verified)
+- `pytest tests/ -v` — runs all 17 unit tests (torch required)
+- `python minimal_example.py` — end-to-end demo, final AUC ≈ 0.9357
+- `python optuna_search.py --n-trials 20` — Optuna HP search (optuna required)
+- `python flaml_baseline.py` — FLAML comparison (flaml required; graceful skip if absent)
+- `python -m py_compile rocstar.py minimal_example.py optuna_search.py flaml_baseline.py` — syntax check
+
+---
+
+## ROADMAP-2026-02-20: Classifier Pipeline Session — Key Decisions
+
+**Session**: ROADMAP-2026-02-20  
+**Orchestrator**: TABNETICS  
+**Date**: 2026-02-20  
+
+### Decision Matrix
+
+| Decision | Chosen | Rejected | Rationale (brief) |
+|----------|--------|----------|-------------------|
+| Classifier abstraction | No ABC; plain functions + scripts | `BaseClassifier` hierarchy | Loss library competes with sklearn/Lightning; ABC serves developer not user (GAME-ROAD-001) |
+| AutoML primary | Optuna TPE + ASHA | H2O, auto-sklearn | PyTorch-native; roc-star loss usable end-to-end; MIT license; no JVM (ARCH-ROAD-001) |
+| GammaNet | DEFERRED | — | Bi-level instability; 1D delta problem solved by 1D Optuna HP (GAME-ROAD-001) |
+| Stacking | DEFERRED | — | Requires k-fold CV infra; prediction correlation inflates expected gain (GAME-ROAD-001) |
+| Data splits | 60/20/20 stratified 3-way | Single train/val | BIO-R1: held-out test set never used for HP selection (BIO-ROAD-001) |
+| Label threshold | `>= 0.5` everywhere | Exact `==1`/`==0` | BIO-R3: consistent soft-label handling in both core functions (BIO-ROAD-001) |
+| Epoch state isolation | Per-trial local vars + seed offset | Module-global state | BIO-R2: eliminates state contamination across HP trials (BIO-ROAD-001) |
+| ASHA effort rating | Medium (training loop refactor) | Low (as claimed by ALG) | Disagreement GAME vs ALG resolved: requires `trial.report`/`should_prune` in loop |
+
+### Implementation Outcome (Observed)
+
+| Metric | Value |
+|--------|-------|
+| pytest results | 17/17 passed (1.15s) |
+| minimal_example.py final AUC | 0.9357 (5 epochs, 1600 train samples) |
+| AUC at epoch 1 (BCE) | 0.7471 |
+| AUC at epoch 5 (roc-star) | 0.9357 (+25.8% relative improvement) |
+| New files | 5 (tests/, minimal_example.py, optuna_search.py, flaml_baseline.py) |
+| rocstar.py lines changed | 2 (BIO-R3 threshold fix) |
 
 ---
 
