@@ -1001,3 +1001,273 @@ This replaces the trains dependency entirely, is self-contained, and supports th
 
 *Document maintained by TABNETICS Orchestrator*  
 *Last Updated*: 2026-02-20 15:22 UTC
+
+---
+
+## GAME-ROAD-001: Prioritized Execution Roadmap — Game Theory Researcher Analysis
+
+**Agent**: Game Theory Researcher (Prioritization & Multi-objective Planner)  
+**Date**: 2026-02-20  
+**Status**: COMPLETE  
+
+---
+
+### 0. Ground Truth: What the Codebase Actually Is
+
+Before any prioritization, the adversarial lens requires stating facts bluntly:
+
+| Fact | Implication |
+|------|-------------|
+| Core value is **2 functions** in 134 LOC (`rocstar.py`) | Every abstraction layer added is proportional overhead |
+| `example.py` requires `trains` (ClearML) + private S3 data | It is **not runnable** without external accounts — it is a demo stub |
+| `hp_search.py` uses `trains.automation` (deprecated API) | It is effectively **dead code** |
+| Zero tests exist | Any claim of "working" is unverified |
+| No PyPI package, no CI pipeline | User adoption friction is maximal |
+
+**Verdict**: The codebase is a proof-of-concept paper artifact. All roadmap proposals must be evaluated against the question: *does this move the needle for the actual user (someone wanting an AUC loss function), or for the phantom user (someone wanting a full AutoML platform)?*
+
+---
+
+### 1. Critique of Architecture Proposals (ARCH-ROAD-001)
+
+#### 1.1 Over-Engineering Score
+
+| Proposal | LOC Added (est.) | User Value | Over-engineering verdict |
+|----------|-----------------|------------|--------------------------|
+| `BaseClassifier` ABC + 4 subclasses | ~300 | None for library users | 🔴 HIGH — pure plumbing |
+| `BaseAutoML` ABC + 3 backends | ~400 | Conditional | 🟠 MEDIUM — only if backends are used |
+| `RocStarObjective` class | ~60 | Low — gamma is already managed per-epoch in training loop | 🟠 MEDIUM — ceremony |
+| `PipelineConfig` dataclass | ~40 | Low — hides defaults, creates magic | 🟡 LOW-MEDIUM |
+
+**Specific attacks**:
+
+**Attack A — `BaseClassifier` ABC is misaligned with the library's purpose.**  
+`rocstar.py` is a *loss function library*, not a classifier framework. Adding `TorchClassifier`, `SklearnClassifier`, `LightGBMClassifier`, `XGBoostClassifier` makes roc-star compete with sklearn, PyTorch Lightning, and every ML framework simultaneously — and lose. The correct abstraction is: give users a loss function, let them plug it into *their* framework. Adding classifier wrappers quadruples the maintenance surface (4 frameworks × N hyperparameters × M dataset types).
+
+**Attack B — `PipelineConfig` dataclass creates hidden-state risk.**  
+A dataclass with defaults means every configuration option that is NOT set by a user still has a value. When bugs occur, the implicit defaults are invisible. The current explicit function arguments are actually *safer* — Python's function signatures are self-documenting. `PipelineConfig` is a solution looking for a problem.
+
+---
+
+### 2. Critique of Algorithm Proposals (ALG-ROAD-001)
+
+#### 2.1 Reordering by Expected Value (EV = Feasibility × AUC Gain / Effort)
+
+| Rank | Proposal | EV Score | Why |
+|------|----------|----------|-----|
+| 1 | **Optuna TPE + roc-star HP search** | 0.90 | Replaces dead `hp_search.py`, concrete deliverable, low effort |
+| 2 | **Hyperband/ASHA pruner in Optuna** | 0.85 | Additive to #1, same code path, 3–5× faster |
+| 3 | **FLAML + LightGBM AUC baseline** | 0.60 | Useful oracle, BUT measures a different thing than roc-star |
+| 4 | **Stacking ensemble** | 0.35 | Requires train/val split protocol not in codebase; scope creep |
+| 5 | **XGBoost custom pairwise surrogate** | 0.30 | Medium effort, narrow gain, orthogonal to roc-star |
+| 6 | **GammaNet meta-network (Moonshot)** | 0.05 | See §3 attack |
+
+#### 2.2 Hidden Problem in FLAML Proposal
+
+The ALG-ROAD-001 framing presents FLAML as a "baseline." But FLAML optimizes for a *separate AUC metric* computed externally — it does not use roc-star loss. This means comparing FLAML's AUC vs roc-star's AUC is comparing two different training objectives on two different model families (GBDT vs LSTM). **The comparison is not controlled**. Any AUC difference could be attributable to: architecture, data preprocessing, random seed, or training budget — not the loss function. This is a methodological flaw that would invalidate the comparison as evidence for roc-star's value.
+
+---
+
+### 3. Moonshot Attack: GammaNet Meta-Network
+
+**Proposal**: A meta-network `G_θ(epoch_stats) → gamma` trained via bi-level optimization.
+
+**Risk Analysis**:
+
+| Risk | Severity | Likelihood | Evidence |
+|------|----------|------------|----------|
+| Bi-level optimization instability | Critical | High | MAML and similar methods routinely require hyperparameter search *for the meta-learner itself* — recursive HP problem |
+| Meta-network collapses to constant | High | Medium | Without diverse training distribution, meta-learner converges to mean of heuristic outputs |
+| Debugging opacity | High | High | When AUC drops, is it the classifier or GammaNet? Attribution is impossible without ablation |
+| Codebase explosion | Medium | High | 134 LOC → ~400 LOC; maintenance burden 3× |
+| Requires training data for GammaNet | High | Certain | Supervised pretraining on heuristic outputs requires storing `epoch_update_gamma` call trace data — not currently captured |
+
+**Verdict**: GammaNet creates a *new optimization problem* (tuning GammaNet) to solve an *existing optimization heuristic* (delta parameter). The existing delta parameter *already provides* a dial to adjust gamma behavior, and its search space is 1-dimensional vs. GammaNet's N-dimensional weight space. **Expected value is negative** when accounting for debugging and maintenance costs. This is the classic ML complexity trap: add a neural network to a problem that a scalar can solve.
+
+---
+
+### 4. Stacking Ensemble Attack
+
+**Proposal**: Ensemble multiple models for +0.005–0.015 AUC.
+
+**Risks**:
+1. **No cross-validation infrastructure exists.** Stacking requires out-of-fold predictions. This requires implementing k-fold CV from scratch — significant scope expansion.
+2. **Ensemble of what?** The codebase has one model architecture (LSTM). Stacking identical models with different seeds is not stacking — it's averaging. To get stacking's benefit, you need *diverse* model types, which brings in the over-engineered classifier hierarchy from ARCH-ROAD-001.
+3. **AUC gain is not additive.** The +0.005–0.015 estimate assumes the ensemble members are uncorrelated. Models trained on the same dataset with similar architectures have high prediction correlation; actual gain is likely 0.001–0.005.
+
+---
+
+### 5. Explicit Disagreements with Prior Researchers
+
+#### Disagreement #1: vs. ARCH-ROAD-001 — "The ABC Hierarchy is Appropriate for This Codebase"
+
+**Their position**: Adding `BaseClassifier`, `BaseAutoML`, `RocStarObjective` provides extensibility and clean separation of concerns.
+
+**My position**: For a 134-LOC loss function library with 2 public functions and zero tests, an ABC hierarchy is architectural premature optimization. The correct response to "how do I use roc-star with XGBoost?" is *documentation and an example script*, not a new ABC. The ABC hierarchy would need its own tests, its own documentation, its own maintenance — tripling the work for no user-facing benefit.
+
+**Test of validity**: Ask: does a PyPI user importing `rocstar` want `from rocstar import BaseClassifier`? No. They want `from rocstar import roc_star_loss`. The ABC hierarchy serves the developer, not the user.
+
+#### Disagreement #2: vs. ALG-ROAD-001 — "ASHA is Low Effort"
+
+**Their position**: Hyperband/ASHA is "Low effort" because Optuna supports it natively.
+
+**My position**: ASHA requires *intermediate reporting callbacks* — the training loop must call `trial.report(current_auc, step=epoch)` and `trial.should_prune()` at each epoch. The current training loop in `example.py` does not support this interface. Adding ASHA requires modifying the training loop with pruning hooks. This is not "low effort" from the current state — it requires refactoring the training loop, which is the most complex code in the repository. Effort is **Medium**, not Low.
+
+---
+
+### 6. Conservative Competing Roadmap
+
+#### Steelman of Minimal Implementation
+
+**Argument**: The roc-star loss function works. The bugs are fixed. The mathematical implementation is correct. The only concrete user-facing gap is: *no one can run HP search without a ClearML account.* Fix that one thing. Everything else is speculative value.
+
+**Minimal implementation value**: Replace `hp_search.py` with a self-contained Optuna script. That is a 1-session deliverable that provides concrete value to every user who wants to tune delta, sub_sample_size, or model hyperparameters. All other proposals are future work.
+
+---
+
+### 7. Phased Roadmap with Task IDs
+
+#### Phase 0: Make It Runnable (Priority: CRITICAL)
+
+**Goal**: Users can clone the repo and run something meaningful without external accounts.
+
+| Task ID | Description | Effort | Acceptance Criteria |
+|---------|-------------|--------|---------------------|
+| T-001 | Add `pytest` test for `epoch_update_gamma` with synthetic tensors | 2h | `pytest tests/` passes; covers empty class, normal, and edge cases |
+| T-002 | Add `pytest` test for `roc_star_loss` with synthetic tensors | 2h | Covers all-positive, all-negative, mixed, device=cpu |
+| T-003 | Create `minimal_example.py` with synthetic data (no `trains`, no S3) | 3h | Runnable with `pip install torch` only; prints AUC per epoch |
+
+**Go/No-Go**: All 3 tasks must be DONE. No tests = no Phase 1.
+
+---
+
+#### Phase 1: Replace Dead hp_search.py (Priority: HIGH)
+
+**Goal**: Self-contained HP search with Optuna, zero external service dependencies.
+
+| Task ID | Description | Effort | Acceptance Criteria |
+|---------|-------------|--------|---------------------|
+| T-004 | Replace `hp_search.py` with `optuna_search.py` using TPE sampler | 4h | Runs on synthetic data; trials logged to SQLite; reproducible with seed |
+| T-005 | Add `delta` as primary HP (log-scale 0.3–5.0) | 1h | HP search correctly varies delta and reports AUC per trial |
+| T-006 | Add Hyperband pruner to Optuna study | 2h | Implement `trial.report` + `trial.should_prune` in training loop; confirm early stopping fires |
+
+**Go/No-Go**: T-004 must produce measurable AUC variation across delta values (confirming delta has actual impact). If delta has no measurable impact, escalate to algorithm investigation before Phase 2.
+
+**Validation Checkpoint**: Run 20 Optuna trials on synthetic data; confirm best delta ≠ worst delta in AUC by ≥ 0.005. If spread < 0.005, delta is not the right primary HP and the search space needs redesign.
+
+---
+
+#### Phase 2: FLAML Comparison Baseline (Priority: MEDIUM — Conditional)
+
+**Condition**: Only proceed if T-003's `minimal_example.py` shows roc-star AUC is competitive with standard BCE training. If roc-star already dominates BCE on the synthetic task, FLAML comparison adds little.
+
+| Task ID | Description | Effort | Acceptance Criteria |
+|---------|-------------|--------|---------------------|
+| T-007 | Create `flaml_baseline.py` — LightGBM + FLAML, same synthetic dataset as T-003 | 3h | Produces a comparable AUC score for reference |
+| T-008 | Document comparison: roc-star LSTM vs FLAML LightGBM | 1h | README table with AUC, training time, dataset |
+
+**Critical constraint**: The comparison must use **identical train/val splits** and **identical label distributions**. Without this, the comparison is not valid. This is a hard requirement.
+
+**Go/No-Go**: Comparison is valid only if dataset, split, and metric are identical. If they cannot be controlled, defer T-007/T-008.
+
+---
+
+#### Phase 3: Selective Architecture Improvements (Priority: LOW — Deferred)
+
+**Condition**: Only if codebase has accumulated ≥3 different model types and users are requesting a unified interface.
+
+| Task ID | Description | Effort | Acceptance Criteria |
+|---------|-------------|--------|---------------------|
+| T-009 | Add `RocStarCallback` for Keras/PyTorch Lightning (no ABC) | 4h | Users can attach callback without reimplementing epoch loop |
+| T-010 | Add type annotations to `rocstar.py` public API | 1h | `mypy rocstar.py` passes; no new runtime behavior |
+
+**Explicitly deferred** (require separate justification):
+- `BaseClassifier` ABC — defer indefinitely
+- `BaseAutoML` ABC — defer until 2+ backends are actually implemented
+- Stacking ensemble — defer until cross-validation infrastructure exists
+- GammaNet meta-network — defer indefinitely; kill if no champion emerges
+
+---
+
+### 8. Priority Matrix
+
+```
+High Expected Value
+^
+|   T-001,T-002      T-004,T-005
+|   (Tests)          (Optuna HP)
+|
+|   T-003            T-006
+|   (Minimal ex.)    (ASHA pruner)
+|
+|          T-007,T-008       T-009
+|          (FLAML)           (Callbacks)
+|
+|                    [Stacking]    [GammaNet]
+|                                  [ABC Hier.]
++-------------------------------------------------> High Implementation Risk
+Low EV                                         High Risk
+```
+
+| Task(s) | Expected Value | Implementation Risk | Decision |
+|---------|---------------|---------------------|----------|
+| T-001, T-002 (tests) | High | Low | **DO NOW** |
+| T-003 (minimal example) | High | Low | **DO NOW** |
+| T-004, T-005 (Optuna) | High | Low-Medium | **DO PHASE 1** |
+| T-006 (ASHA) | Medium | Medium | **DO PHASE 1 if T-004 done** |
+| T-007, T-008 (FLAML) | Medium | Medium (method validity risk) | **CONDITIONAL** |
+| T-009 (callbacks) | Medium | Low | **PHASE 3** |
+| T-010 (type hints) | Low | Very Low | **ANYTIME** |
+| Stacking ensemble | Low | High (needs CV infra) | **DEFER** |
+| BaseClassifier ABC | Very Low | High (scope explosion) | **REJECT** |
+| GammaNet | Very Low | Very High | **REJECT** |
+
+---
+
+### 9. Validation Checkpoint Plan
+
+| Checkpoint | After Task | Metric | Pass Threshold | Fail Action |
+|------------|-----------|--------|---------------|-------------|
+| CP-0 | T-001, T-002 | Tests pass | 100% pass rate | Fix bugs before proceeding |
+| CP-1 | T-003 | roc-star vs BCE AUC on synthetic data | roc-star AUC ≥ BCE AUC - 0.01 (parity acceptable in warmup) | Investigate rocstar.py bug |
+| CP-2 | T-004, T-005 | AUC spread across 20 Optuna trials | Max delta AUC - Min delta AUC ≥ 0.005 | Redesign HP search space |
+| CP-3 | T-006 | ASHA early stopping fires | ≥1 trial pruned in 20-trial study | Check `trial.report` placement |
+| CP-4 | T-007, T-008 | roc-star vs FLAML AUC comparison | Valid controlled comparison documented | Ensure identical split/metric |
+
+---
+
+### 10. Go/No-Go Summary
+
+| Phase | Entry Gate | Exit Gate |
+|-------|-----------|-----------|
+| Phase 0 → 1 | Repository is cloneable | CP-0: all tests pass; CP-1: roc-star runs and produces AUC |
+| Phase 1 → 2 | Phase 0 complete | CP-2: delta has measurable AUC impact; CP-3: ASHA fires |
+| Phase 2 → 3 | Phase 1 complete + 3+ model types exist in repo | CP-4: controlled comparison valid |
+| Phase 3+ | Must justify with user demand evidence | Architecture must solve a demonstrated pain point |
+
+---
+
+### 11. Final Adversarial Verdict
+
+The prior researchers have done excellent work identifying and fixing real bugs (P0/P1 issues). The roadmap proposals, however, exhibit a common failure mode: **the proposals are scoped for a large codebase, not a 134-LOC loss function library.**
+
+The highest-value action in a single session is:
+1. Write tests (T-001, T-002)
+2. Write a runnable example without external dependencies (T-003)
+3. Replace dead `hp_search.py` with working Optuna search (T-004, T-005)
+
+Everything else — ABC hierarchies, GammaNet, stacking — is speculative overhead that should not be built until the library has users demonstrating those needs. **Build for the user who exists, not the user you imagine.**
+
+**Recommended session deliverables** (ranked by EV):
+1. `tests/test_rocstar.py` — T-001, T-002
+2. `minimal_example.py` — T-003
+3. `optuna_search.py` — T-004, T-005, T-006
+
+**Do not build**: `BaseClassifier`, `BaseAutoML`, `RocStarObjective`, `GammaNet`, stacking infrastructure.
+
+---
+
+*Agent*: Game Theory Researcher  
+*Task ID*: GAME-ROAD-001  
+*Date*: 2026-02-20  
+*Status*: ✅ COMPLETE

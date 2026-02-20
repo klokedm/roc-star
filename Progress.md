@@ -181,6 +181,27 @@ None
 
 ---
 
+## Task: GAME-ROAD-001 — Prioritized Execution Roadmap (Game Theory Analysis)
+**Status**: ✅ DONE  
+**Agent**: Game Theory Researcher  
+**Date**: 2026-02-20  
+**Summary**: Adversarial critique of ARCH-ROAD-001 and ALG-ROAD-001 proposals; produced execution-ready phased roadmap. Full findings in Archive.md § GAME-ROAD-001.
+
+**Key Outputs**:
+- **Rejected**: `BaseClassifier`/`BaseAutoML` ABC hierarchy (over-engineering; 0 user value for a 134-LOC loss library)
+- **Rejected**: GammaNet meta-network (bi-level optimization instability; delta parameter already provides 1D search space)
+- **Rejected**: Stacking ensemble (requires CV infrastructure not in codebase; correlation inflation)
+- **Surfaced**: FLAML comparison is methodologically invalid without controlled split/metric
+- **Surfaced**: ASHA is Medium effort (not Low) — requires training loop refactoring
+- **Conservative roadmap**: T-001–T-010 in 3 phases gated by measurable AUC checkpoints
+- **Recommended session deliverables**: `tests/test_rocstar.py`, `minimal_example.py`, `optuna_search.py`
+
+**Explicit Disagreements**:
+1. vs ARCH-ROAD-001: ABC hierarchy is premature abstraction for a loss function library
+2. vs ALG-ROAD-001: ASHA is Medium effort (not Low); FLAML comparison requires methodological controls not yet in place
+
+---
+
 ## Questions & Blockers
 
 ### Open Questions
