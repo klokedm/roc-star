@@ -1271,3 +1271,198 @@ Everything else — ABC hierarchies, GammaNet, stacking — is speculative overh
 *Task ID*: GAME-ROAD-001  
 *Date*: 2026-02-20  
 *Status*: ✅ COMPLETE
+
+---
+
+## BIO-ROAD-001: Domain Reality Check — Data & Validity Risks in the Proposed AutoML Pipeline
+
+*Agent*: Bioinformatics Researcher  
+*Task ID*: BIO-ROAD-001  
+*Date*: 2026-02-20  
+*Status*: ✅ COMPLETE
+
+---
+
+### 1. Risk Register
+
+| Risk ID | Risk | Severity | Likelihood | Evidence |
+|---------|------|----------|------------|----------|
+| BIO-R1 | Validation set overfitting via repeated HP search | **CRITICAL** | **High** | `hp_search.py`: `objective_metric_series='validation accuracy'` over 10–30 trials; same fixed val set reused every trial |
+| BIO-R2 | Global state contamination between HP trials (best_result, model checkpoint path) | **HIGH** | **High** | `example.py`: `best_result` is a module-level dict; `torch.save(..., "roc-star.pt")` uses a fixed temp path; both are shared across all sequential `train_model` calls |
+| BIO-R3 | Label threshold inconsistency between `epoch_update_gamma` and `roc_star_loss` | **HIGH** | **Medium** | `rocstar.py:12-13`: uses `y_true==1` / `y_true==0` (exact equality); `rocstar.py:67-68`: uses `>=0.50` threshold. Soft labels cause gamma to be computed on a different sample subset than the loss |
+| BIO-R4 | Subsampling variance inflates trial-to-trial AUC noise in HP search | **MEDIUM** | **High** | `rocstar.py:25-28`, `rocstar.py:84-87`: Bernoulli sampling with expected size ≈ min(N, cap); actual sample count varies by ±√N per epoch, making gamma and loss noisy |
+| BIO-R5 | Cross-framework comparison invalid without controlled preprocessing and budget parity | **MEDIUM** | **High** | `hp_search.py` + `ArchitectureRefactor.md §4`: roc-star LSTM vs LightGBM/XGBoost trained on different feature representations, different HP budgets, and different loss objectives |
+
+---
+
+### 2. Top-2 Most Serious Risks (Detailed)
+
+#### RISK BIO-R1 (CRITICAL): Validation Set Overfitting via Repeated HP Search
+
+**Description**:  
+`hp_search.py` (line: `objective_metric_series='validation accuracy'`) runs up to `total_max_jobs=10` to `max_iteration_per_job=30` trials, each reporting validation AUC as the optimization objective. The HP search algorithm (BOHB/GridSearch) selects configurations that happen to score well on the *identical* fixed validation split across all trials.
+
+This is the **adaptive data analysis** problem: each trial that sees the validation AUC and uses it to inform the next configuration choice consumes some of the validation set's finite statistical degrees of freedom. After 30+ trials, the "best" configuration has been selected not purely on generalization ability but partly on over-fitting to validation-set-specific noise patterns. The final reported validation AUC is **optimistically biased** relative to true generalization.
+
+**Severity escalators**:
+- Small datasets amplify the effect (validation noise is larger relative to signal)
+- BOHB concentrates later trials near the incumbent best, compounding the bias
+- The effect is silent — the number looks valid but is not
+
+**Concrete Mitigations**:
+1. **Nested CV / holdout test set**: Reserve a true test set *not seen by any trial*. Report final AUC only on this test set after HP selection on the validation set. This is the minimum requirement for a valid final report.
+2. **Cap number of HP trials**: With a fixed validation set, limit trials to `floor(n_val / 10)` as a rough heuristic (e.g., ≤100 trials for a 1000-sample val set). Document this cap in `hp_search.py`.
+3. **Repeated holdout / bootstrap validation**: For small datasets, replace the single val split with k repeated random splits; report mean ± std AUC across splits as the HP objective. This shrinks per-trial bias.
+4. **Bonferroni correction on final report**: When comparing the best HP config to a baseline, apply multiple-comparison correction (e.g., McNemar's test with Bonferroni) to account for the selection process.
+
+---
+
+#### RISK BIO-R2 (HIGH): Global State Contamination Between HP Trials
+
+**Description**:  
+Two global side effects in `example.py` corrupt state across sequential HP search trials:
+
+**A. `best_result` (module-level global dict)**  
+`best_result` (declared at module level, `example.py`) accumulates across all `run()` and `train_model()` calls within the same process. In an HP search that launches multiple trials sequentially in the same Python process (as `hp_search.py` does via `trains` orchestration with `run_as_service=False`), trial N's "best model" can be superceded by trial N+1's result, but the selection logic compares `best_result['auc']` across trials without resetting. This means:
+- The saved model (`roc-star.pt`) does not correspond to "the best configuration found by this trial" — it corresponds to "the best single epoch across ALL trials ever run in this process."
+- HP search reports `best_result['auc']` which conflates within-trial model selection with across-trial selection.
+
+**B. Fixed checkpoint path: `torch.save(model.state_dict(), os.path.join(gettempdir(), "roc-star.pt"))`**  
+All trials write to the same temp file path. In a parallel or sequential multi-trial search, trial N+1 silently overwrites trial N's checkpoint. The HP framework cannot recover the best model reliably.
+
+**C. `epoch_gamma` / `last_whole_y_t` / `last_whole_y_pred` (function-local, safe)**  
+These ARE function-local variables in `train_model`. They do NOT leak between separate `train_model` calls. This is safe for sequential trials. However, if a future refactor elevates them to class-level or module-level state (e.g., in `TorchClassifier`), contamination becomes a risk.
+
+**Concrete Mitigations**:
+1. **Reset `best_result` at trial start**: `best_result = {}` must be called at the beginning of every `run()` call (or scoped as a local variable inside `run()`).
+2. **Per-trial checkpoint paths**: Use `os.path.join(gettempdir(), f"roc-star-trial-{trial_id}.pt")` with a unique trial ID. Clean up after trial completion.
+3. **`RocStarObjective.reset()` enforcement**: Per ARCH-ROAD-001 design, the `reset()` method must explicitly clear epoch state AND best-result tracking. Add an assertion verifying `reset()` was called before each trial.
+4. **Isolation via subprocess**: For parallel HP search, run each trial as an isolated subprocess (Optuna supports `n_jobs=1` with subprocess workers) to prevent any shared Python state.
+
+---
+
+### 3. Label Threshold Inconsistency (BIO-R3)
+
+**Description**:  
+`epoch_update_gamma` uses exact equality to separate positives and negatives:
+```python
+# rocstar.py:12-13
+pos = y_pred[y_true==1]
+neg = y_pred[y_true==0]
+```
+
+`roc_star_loss` uses a 0.5 threshold:
+```python
+# rocstar.py:67-68
+y_true = (_y_true>=0.50)
+epoch_true = (_epoch_true>=0.50)
+```
+
+**Consequence**: If labels are soft (e.g., 0.7 for a borderline positive), `epoch_update_gamma` excludes them from both the positive and negative pools (neither `==0` nor `==1`), while `roc_star_loss` assigns them to the positive class. Gamma is computed on a subset of the data that does not match the actual training distribution, producing a systematically biased margin estimate.
+
+**Mitigation**:
+- Align `epoch_update_gamma` to use `>=0.5` thresholding consistently:
+  ```python
+  pos = y_pred[y_true >= 0.5]
+  neg = y_pred[y_true < 0.5]
+  ```
+- Add an invariant check: if `cap_pos + cap_neg != len(y_true)`, the label set contains values not exactly 0 or 1 — emit a warning.
+- This is a **P1 fix** — it silently produces wrong gamma for any caller using soft labels or non-integer label tensors.
+
+**Pre-processing Invariant**: Labels fed to both functions MUST be exactly 0.0 or 1.0. Document this invariant explicitly. The input validation layer (deferred to v1.1) should enforce `assert torch.all((y_true == 0) | (y_true == 1))`.
+
+---
+
+### 4. Subsampling Variance (BIO-R4)
+
+**Description**:  
+Both `epoch_update_gamma` and `roc_star_loss` use Bernoulli subsampling:
+```python
+# rocstar.py:25-27
+pos = pos[torch.rand_like(pos) < SUB_SAMPLE_SIZE/cap_pos]
+neg = neg[torch.rand_like(neg) < SUB_SAMPLE_SIZE/cap_neg]
+# rocstar.py:85-87
+epoch_pos = epoch_pos[torch.rand_like(epoch_pos) < max_pos/cap_pos]
+epoch_neg = epoch_neg[torch.rand_like(epoch_neg) < max_neg/cap_neg]
+```
+
+For a class with `cap_pos >> max_pos`, the effective sample count follows `Binomial(cap_pos, max_pos/cap_pos)` with mean `max_pos` and std `sqrt(max_pos * (1 - max_pos/cap_pos)) ≈ sqrt(max_pos)`. For `max_pos = 1000`, std ≈ 31.6 samples — a 3.2% variation per epoch.
+
+**Impact on HP search**: Gamma varies stochastically across epochs even with identical data. The HP trial that wins may have benefited from a "lucky" subsample yielding a favorable gamma, not from superior hyperparameters. This inflates false-discovery rate in HP search.
+
+**Mitigation**:
+- The v1.1 deterministic sampling (already deferred in ArchitectureRefactor.md) should use `torch.randperm` with a seeded generator rather than Bernoulli, yielding exact sample counts.
+- During HP search, fix the random seed for subsampling across all trials to ensure the same subsample draw (removes subsampling as a confound). Expose via `RocStarConfig.random_seed`.
+
+---
+
+### 5. Methodological Requirements for Valid Cross-Framework Comparison
+
+For a valid comparison between roc-star (PyTorch) vs LightGBM vs XGBoost vs sklearn:
+
+| Requirement | Current State | Required Action |
+|-------------|--------------|-----------------|
+| **Identical train/val/test splits** | Not enforced; each framework uses its own data loading | Fix split before any model is instantiated; pass pre-split arrays to all backends |
+| **Identical feature preprocessing** | PyTorch uses embedding lookup; GBDT uses tabular features | Tabular comparison requires same feature matrix; LSTM comparison is not a fair tabular comparison |
+| **Same evaluation metric** | hp_search.py uses "validation accuracy" (ambiguous — is it accuracy or AUC?) | Standardize to `roc_auc_score` on the held-out test set for all backends |
+| **Commensurable HP budgets** | PyTorch: N_trials × N_epochs; FLAML: wall-clock budget | Normalize by total training time, not trial count |
+| **Held-out test set** | No test set reserved; validation set is the HP target | Reserve a third split before HP search; never let HP search see it |
+| **Same positive class prevalence** | Stratified split required | Use `sklearn.model_selection.train_test_split(stratify=y)` |
+| **Same random seed** | Seeded in `example.py`; not enforced in HP search | Pass seed to all frameworks; document it as a required parameter |
+
+**Critical constraint (from GAME-ROAD-001 BIO confirmation)**: Comparing roc-star LSTM vs LightGBM without identical feature matrices is comparing *architectures*, not *loss functions*. Any AUC difference is attributable to architecture, not the roc-star objective. This comparison is scientifically invalid as evidence for roc-star's value unless architecture is controlled (e.g., using the same MLP with roc-star loss vs BCE loss).
+
+---
+
+### 6. Pre-Processing Invariants Checklist
+
+The following invariants MUST hold before data reaches `roc_star_loss` or `epoch_update_gamma`:
+
+- [ ] **Label dtype**: `y_true` must be `torch.float32` (not `int64` or `bool`). Exact values must be `0.0` or `1.0`.
+- [ ] **Label values**: No soft labels, no values in `(0, 1)` exclusive. Add: `assert torch.all((y_true == 0.0) | (y_true == 1.0))`.
+- [ ] **Class balance**: Both classes must be present in each batch AND in the epoch-level tensors. (P0 bug fixes handle the empty-class case, but gamma degrades to `default_gamma=0.2` silently.)
+- [ ] **Prediction range**: `y_pred` values should be in `[0, 1]` (sigmoid output). Logit inputs will cause incorrect gamma scaling. Document this constraint.
+- [ ] **Shape consistency**: `y_true.shape == y_pred.shape` (1D tensors). The loss does not check this.
+- [ ] **Epoch tensor non-empty at epoch > 0**: `last_whole_y_t` and `last_whole_y_pred` must be non-empty when `epoch > 0`. If the training set is empty or all-one-class for epoch 0, roc-star loss silently uses BCE for all epochs (epoch guard never passes).
+- [ ] **Stratified splits**: `y_val` must preserve positive class prevalence from `y_train`. Unstratified splits with small datasets can produce val sets that are all-negative, making `roc_auc_score` undefined (raises `ValueError`).
+- [ ] **No data leakage at split boundary**: Features derived from the full dataset (e.g., TF-IDF vocabulary, embeddings) must be fit on training data only and applied to val/test.
+
+---
+
+### 7. HP Search Protocol Recommendations
+
+1. **Three-split protocol (mandatory)**: `train` / `val` / `test`. HP search runs on `val`. Final metric reported on `test` only once, after HP selection.
+
+2. **Trial count cap**: Limit total HP trials to `≤ n_val / 20` (rule of thumb for tabular data with AUC objective). For the Twitter sentiment dataset (~80K val samples), cap at ≤4,000 trials. For small synthetic datasets (≤500 val samples), cap at ≤25 trials.
+
+3. **Seed lock during HP search**: Fix `torch.manual_seed`, numpy seed, and framework-level seed in each trial to the trial number. This makes trial evaluation reproducible without removing stochasticity across trials.
+
+4. **Reset global state per trial**: Call `best_result = {}` and delete previous checkpoint before each trial starts. Ensure `epoch_gamma` (and any `RocStarObjective` state) is freshly initialized.
+
+5. **Warm-up epoch requirement**: roc-star loss requires at least 1 full BCE warm-up epoch before `epoch_gamma` is valid. HP search configurations with `n_epochs=1` silently never use roc-star loss (`epoch > 0` guard fails). Enforce `min_epochs ≥ 2` when `use_roc_star=True`.
+
+6. **Subsampling seed parity**: During HP comparison across configurations, fix the subsampling seed so that configurations are evaluated on the same subsampled pairs. Otherwise, AUC differences < ~0.005 may be attributable to subsampling noise rather than HP differences.
+
+7. **Early stopping via pruning (not val AUC)**: Prefer Hyperband/ASHA pruning based on per-epoch val AUC trajectory rather than reporting final-epoch val AUC. This reduces the number of "looks" at the validation set per trial, mitigating BIO-R1.
+
+---
+
+### 8. Summary of New Issues Found (for Triage)
+
+| Issue ID | Description | Severity | File | Recommendation |
+|----------|-------------|----------|------|----------------|
+| BIO-R1 | Validation set overfitting via HP search | **P1** | `hp_search.py` | Mandatory: add held-out test set; document trial cap |
+| BIO-R2a | `best_result` global not reset between HP trials | **P1** | `example.py` | Move to local scope in `run()` |
+| BIO-R2b | Fixed checkpoint path across all trials | **P1** | `example.py` | Use per-trial unique path |
+| BIO-R3 | `epoch_update_gamma` uses `==` vs `>=0.5` threshold mismatch | **P1** | `rocstar.py:12-13` | Change to `>= 0.5` / `< 0.5` for consistency |
+| BIO-R4 | Subsampling variance inflates HP search noise | **P2** | `rocstar.py:25-28, 84-87` | Deterministic sampling (already deferred to v1.1) |
+| BIO-R5 | Cross-framework comparison invalid without same feature matrix | **P2** | `ArchitectureRefactor.md §4` | Document constraint; require same feature input for valid comparison |
+| BIO-NEW1 | `min_epochs ≥ 2` not enforced when `use_roc_star=True` | **P2** | `example.py` | Add assertion or guard |
+| BIO-NEW2 | No stratified split guarantee in data loading | **P2** | `example.py` | Document requirement; pre-check val class balance |
+
+---
+
+*Agent*: Bioinformatics Researcher  
+*Task ID*: BIO-ROAD-001  
+*Date*: 2026-02-20  
+*Status*: ✅ COMPLETE

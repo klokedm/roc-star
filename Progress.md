@@ -202,6 +202,28 @@ None
 
 ---
 
+## Task: BIO-ROAD-001 — Domain Reality Check: Data & Validity Risks in AutoML Pipeline
+**Status**: ✅ DONE  
+**Agent**: Bioinformatics Researcher  
+**Date**: 2026-02-20  
+**Summary**: Identified 8 data/validity risks in the proposed AutoML classifier pipeline. Full findings in Archive.md § BIO-ROAD-001.
+
+**Top-2 Critical Risks**:
+1. **BIO-R1 (CRITICAL)**: Validation set overfitting via repeated HP search — same val split used as optimization target across all trials; final AUC is inflated. Mitigation: mandatory held-out test set + trial count cap.
+2. **BIO-R2 (HIGH)**: Global state contamination between HP trials — `best_result` module-level dict and fixed `roc-star.pt` checkpoint path persist across all trials in same process; HP search cannot reliably identify the best configuration. Mitigation: reset `best_result` to local scope; use per-trial checkpoint paths.
+
+**Additional Issues**:
+- **BIO-R3 (P1)**: `epoch_update_gamma` uses exact equality (`y_true==1`) while `roc_star_loss` uses `>=0.5` threshold — inconsistency corrupts gamma for any soft-label caller. Fix: align to `>= 0.5` in `rocstar.py:12-13`.
+- **BIO-R4 (P2)**: Bernoulli subsampling variance (±31 samples at max_pos=1000) inflates trial-to-trial AUC noise; addressed by v1.1 deterministic sampling (already deferred).
+- **BIO-R5 (P2)**: Cross-framework comparison (roc-star LSTM vs GBDT) is invalid without identical feature matrices — any AUC delta reflects architecture not loss function.
+- **BIO-NEW1 (P2)**: `min_epochs ≥ 2` not enforced when `use_roc_star=True`; single-epoch trials silently never apply roc-star loss.
+- **BIO-NEW2 (P2)**: No stratified split guarantee; all-negative val sets cause `roc_auc_score` to raise `ValueError`.
+
+**Pre-Processing Invariants Defined**: 8 invariants documented for labels, shapes, splits, and epoch state.  
+**HP Search Protocol**: 7-point protocol defined including 3-split mandatory, trial count cap, seed lock, and warm-up epoch enforcement.
+
+---
+
 ## Questions & Blockers
 
 ### Open Questions

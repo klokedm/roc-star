@@ -10,8 +10,9 @@ def epoch_update_gamma(y_true,y_pred, epoch=-1,delta=1):
         """
         DELTA = delta  # Fixed: was delta+1, should be delta per Yan et al. 2003 (proportional margin parameter)
         SUB_SAMPLE_SIZE = 2000.0
-        pos = y_pred[y_true==1]
-        neg = y_pred[y_true==0] # yo pytorch, no boolean tensors or operators?  Wassap?
+        # Fixed: Use >=0.5 threshold (consistent with roc_star_loss) to handle soft labels (BIO-R3)
+        pos = y_pred[y_true >= 0.5]
+        neg = y_pred[y_true < 0.5]
         # subsample the training set for performance
         cap_pos = pos.shape[0]
         cap_neg = neg.shape[0]
