@@ -10,7 +10,8 @@ def epoch_update_gamma(y_true,y_pred, epoch=-1,delta=1):
         """
         DELTA = delta  # Fixed: was delta+1, should be delta per Yan et al. 2003 (proportional margin parameter)
         SUB_SAMPLE_SIZE = 2000.0
-        # Fixed: Use >=0.5 threshold (consistent with roc_star_loss) to handle soft labels (BIO-R3)
+        # Fixed: Use >=0.5 threshold (consistent with roc_star_loss) to handle soft labels (BIO-R3).
+        # Soft labels are any y_true values not exactly 0.0 or 1.0 (e.g., 0.7 for uncertain annotations).
         pos = y_pred[y_true >= 0.5]
         neg = y_pred[y_true < 0.5]
         # subsample the training set for performance

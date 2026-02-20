@@ -31,6 +31,7 @@ from trains import StorageManager
 from pkbar import Kbar as Progbar
 import argparse
 import os
+import uuid
 from tempfile import gettempdir
 
 from rocstar import epoch_update_gamma, roc_star_loss
@@ -233,9 +234,8 @@ class NeuralNet(nn.Module):
 def train_model(h_params, model, x_train, x_valid, y_train, y_valid,  lr,
                 batch_size=1000, n_epochs=20, title='', graph=''):
     global best_result
-    import uuid
     # Fixed: Use unique checkpoint path per run to prevent cross-trial file overwrites (BIO-R2b)
-    _checkpoint_path = os.path.join(gettempdir(), f"roc-star-{title or uuid.uuid4().hex[:8]}.pt")
+    checkpoint_path = os.path.join(gettempdir(), f"roc-star-{title or uuid.uuid4().hex[:8]}.pt")
     device = next(model.parameters()).device
     param_lrs = [{'params': param, 'lr': lr} for param in model.parameters()]
     optimizer = torch.optim.AdamW(param_lrs, lr=h_params.initial_lr,
@@ -348,7 +348,7 @@ def train_model(h_params, model, x_train, x_valid, y_train, y_valid,  lr,
             best_result['auc']= valid_auc
             best_result['params'] = copy(h_params)
             best_result['epoch'] = epoch+1
-            torch.save(model.state_dict(), _checkpoint_path)
+            torch.save(model.state_dict(), checkpoint_path)
             print('* * grabbing ', best_result)
 
 
