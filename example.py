@@ -82,7 +82,7 @@ def init(h_params):
     del x_train, y_train, x_valid, y_valid; gc.collect(2)
 
     task_name = "ROC" if h_params.use_roc_star else "BxE"
-    task = Task.init(project_name='Roc-star Loss', task_name='Roc star')
+    task = Task.init(project_name='Roc-star Loss', task_name=task_name)
     logger = task.get_logger()
 
 
