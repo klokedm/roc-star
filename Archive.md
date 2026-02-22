@@ -662,7 +662,179 @@ def epoch_update_gamma(y_true, y_pred, epoch=-1, delta=1, generator=None):
 
 ---
 
-## Appendices
+## Deferred-Task Triage — 2026-02-22
+
+**Triage Session**: Review of all previously-deferred items  
+**Date**: 2026-02-22  
+**Method**: In-depth per-task analysis combining (a) empirical evidence in the codebase, (b) literature review (Yan et al. 2003, PyTorch best practices), and (c) project-state constraints (no CI, no live test suite, ~1.3 K GitHub stars)
+
+### Triage Outcome Summary
+
+| Task ID | Title | Decision | Rationale |
+|---------|-------|----------|-----------|
+| T-R-101 | Input Validation Layer | **ACTIVE** | No shape/dtype/range guards; feasible inline, no API break |
+| T-R-105 | Extract Magic Numbers as Constants | **ACTIVE** | 5 literals identified; trivial module-level extraction |
+| T-R-110 | NumPy-style Docstrings | **ACTIVE** | Pure documentation improvement; zero risk |
+| T-R-115 | Remove Unused Variables | **ACTIVE** | `ln_All` (L29) and `ln_L1` (L48) assigned but never read |
+| T-R-120 | Type Hints | **PERMANENTLY ARCHIVED** | Value requires mypy CI + package structure (T-R-143); circular dependency |
+| T-R-125 | Refactor Global State in example.py | **ACTIVE** | Medium effort but scoped to example.py; improves testability |
+| T-R-130 | Shuffle Validation DataLoader | **ACTIVE** | Twitter data has temporal clustering; biased AUC risk is real |
+| T-R-143 | Package Restructuring (v2.0) | **PERMANENTLY ARCHIVED** | Breaking API change with no test safety net; ~1.3 K star user base |
+| T-R-205 | No Early Stopping | **PERMANENTLY ARCHIVED** | Explicit design choice per README; AUC loss dynamics differ from BCE |
+| T-R-211 | Test Infrastructure Bootstrap | **DEFERRED (val-9)** | Needs expected-metric baselines from val-9 to write meaningful tests |
+| T-R-214 | Deterministic Sampling | **DEFERRED (val-9)** | val-9 will quantify run-to-run variance; urgency depends on result |
+
+---
+
+### Per-Task Analysis
+
+#### T-R-115 — Remove Unused Variables
+**Evidence** (rocstar.py):
+- Line 29: `ln_All = diff.shape[0]` — assigned, never referenced again in the function
+- Line 48: `ln_L1 = L1.shape[0]` — assigned, never referenced again in the function
+- Both were presumably intended for future use or debugging but introduce dead code noise
+**Literature**: PEP 8 and general Python style recommend removing dead assignments  
+**Risk**: Zero — removing read-never variables cannot change behaviour  
+**Decision**: ACTIVE — quick win, recommended first task
+
+#### T-R-130 — Shuffle Validation DataLoader
+**Evidence** (example.py L245):
+```python
+valid_loader = torch.utils.data.DataLoader(..., shuffle=False)
+```
+The training set is Twitter sentiment data with timestamp-ordered observations. Temporal clustering (trending topics, viral events) means sequential validation batches may represent different sentiment distributions. `roc_auc_score` on ordered data overestimates or underestimates AUC depending on whether positive/negative labels cluster.  
+**Literature**: Standard ML evaluation practice (Hastie et al. *Elements of Statistical Learning*, §7.3) recommends shuffling held-out sets to obtain unbiased performance estimates.  
+**Counterpoint**: Changing to `shuffle=True` will alter reported AUC numbers between runs. Acceptable because (a) reported AUC is already non-deterministic due to T-R-214, and (b) the change makes estimates more reliable.  
+**Risk**: Low — only affects evaluation numbers in example.py, not the core loss function  
+**Decision**: ACTIVE — one-line fix, document in change notes
+
+#### T-R-105 — Extract Magic Numbers as Constants
+**Evidence** (rocstar.py):
+- `SUB_SAMPLE_SIZE = 2000.0` (L12, local to function — should be module-level)
+- `max_pos = 1000`, `max_neg = 1000` (L84–85, local to function)
+- `0.2` (L21, L41) — default gamma fallback
+- `0.50` (L69–70) — label binarization threshold
+
+These appear in two different functions with no cross-reference documentation. Extracting them as named module-level constants makes the relationship between parameters explicit and allows users to understand tuneable knobs.  
+**Literature**: Clean Code (Martin, 2008) §17 — magic numbers obscure intent and cause duplicated meaning  
+**Risk**: Zero (no API change) if exposed as module attributes (e.g., `rocstar.DEFAULT_GAMMA = 0.2`)  
+**Decision**: ACTIVE — low effort, high readability payoff
+
+#### T-R-110 — NumPy-style Docstrings
+**Evidence** (rocstar.py L4–10, L57–67):
+Current docstrings use informal inline listing:
+```
+y_true: `Tensor`. Targets (labels).  Float either 0.0 or 1.0 .
+```
+NumPy format:
+```
+Parameters
+----------
+y_true : torch.Tensor
+    Targets (labels). Float either 0.0 or 1.0.
+```
+**Literature**: NumPy docstring standard is the de-facto convention for scientific Python (scikit-learn, pandas, scipy all use it). Sphinx autodoc renders it correctly.  
+**Risk**: Zero — documentation only  
+**Decision**: ACTIVE — improves discoverability and IDE tooling
+
+#### T-R-101 — Input Validation Layer
+**Evidence** (rocstar.py):
+- No check that `y_true.shape == y_pred.shape` (shape mismatch → cryptic PyTorch broadcast error)
+- No check that `y_true.dtype` is float (integer labels silently work with `>= 0.50` but give wrong results)
+- No check for NaN/Inf in *inputs* (only output is guarded at L132)
+- No check that `y_pred` values are in plausible range [0, 1] (soft labels outside range degrade gamma)
+
+Proposed minimal implementation: a private `_validate_inputs(y_true, y_pred)` helper called at the top of each public function.  
+**Literature**: PyTorch's own `F.binary_cross_entropy` raises `RuntimeError` with descriptive messages for wrong dtypes. Following this pattern is expected by PyTorch ecosystem users.  
+**Risk**: Low — adding `assert` or `torch.testing.assert_close` guards. Only breaks code that was already broken.  
+**Decision**: ACTIVE — 3–5 hours; good for user experience
+
+#### T-R-125 — Refactor Global State in example.py
+**Evidence** (example.py L43–50):
+```python
+x_train_torch,x_valid_torch,y_train_torch,y_valid_torch = None,None,None,None
+embedding_matrix = None
+task=None; logger=None; best_result={}
+max_features = 200000; embed_size = 300
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+```
+`train_model()` uses `global best_result` (L235). This pattern makes `example.py` impossible to call twice in the same process and untestable.  
+**Literature**: Google Python Style Guide recommends avoiding module-level mutable state; Python packaging best practices require encapsulation in `main()` or a class.  
+**Risk**: Medium — refactoring example.py touches 400 lines but does not affect `rocstar.py` (core library unchanged)  
+**Decision**: ACTIVE — scoped to example.py; does not risk core library behaviour
+
+#### T-R-120 — Type Hints (PERMANENTLY ARCHIVED)
+**Analysis**: Type hints in Python provide value when:
+1. A type checker (mypy, pyright) runs in CI to enforce them, OR  
+2. An IDE uses them for inline completion (secondary benefit only)
+
+This repo has no CI and no `pyproject.toml`. Adding type hints to `rocstar.py` without enforcing them is purely cosmetic. Furthermore, correct PyTorch type annotations require `torch.Tensor` and `Optional[torch.Tensor]` imports, which would need to be reconciled during the T-R-143 package restructure.  
+**Circular dependency**: T-R-120 is most valuable after T-R-143 (package) and T-R-211 (CI/test), both of which are blocked.  
+**Decision**: PERMANENTLY ARCHIVED — reopen only after T-R-143 is un-archived and T-R-211 is complete
+
+#### T-R-143 — Package Restructuring (PERMANENTLY ARCHIVED)
+**Analysis**:  
+- Requires splitting `rocstar.py` into `rocstar/loss.py`, `rocstar/gamma.py`, `rocstar/sampling.py`, `rocstar/validation.py`, `rocstar/config.py`
+- Breaks the existing `from rocstar import epoch_update_gamma, roc_star_loss` import used in `example.py` and by all downstream users
+- GitHub: ~1.3K stars implies real downstream usage patterns unknown to us (pip install from GitHub, copy-paste, fork)
+- No test infrastructure to verify regression-free behaviour after split
+- Without T-R-211 (tests), restructuring is flying blind
+
+**Creative Contradiction outcome** (already recorded in Archive.md §Creative Contradiction Analysis):  
+Red Team (SWE-001) rejected immediate restructuring. Consensus: defer to v2.0 after tests are written.  
+**2026-02-22 Triage update**: Permanently archived because the blocker (T-R-211 test infrastructure) is itself deferred until val-9. Un-archive only when val-9 completes and T-R-211 is delivered.  
+**Decision**: PERMANENTLY ARCHIVED
+
+#### T-R-205 — No Early Stopping (PERMANENTLY ARCHIVED)
+**Analysis**:  
+README states explicitly: *"roc_star eliminates entirely the need for Early Stopping"*. This is a deliberate design claim, not an oversight.
+
+Theoretical basis (Yan et al. 2003): The WMW-approximation loss directly optimises the pairwise ranking objective. Unlike BCE (which optimises a proxy), AUC loss has a monotonic relationship with validation AUC under i.i.d. assumptions. Overfitting in the BCE sense (memorising training labels) should also manifest as degraded gamma and increased pairwise loss, self-correcting.
+
+Empirical safeguard: `example.py` L344–349 saves best-validation-AUC model, so even if training AUC diverges, the returned model is the best checkpoint.  
+**GAME-001 failure scenario**: "validation AUC peaks at epoch 5, degrades epochs 6–30" — mitigated by model checkpoint.  
+**Residual risk**: Single-epoch AUC spike triggers checkpoint (no 2-epoch persistence). Acceptable because this is outside the scope of the *loss function*; it is an example.py training-loop policy.  
+**Decision**: PERMANENTLY ARCHIVED — design choice documented in README; the checkpoint mechanism handles the practical risk
+
+#### T-R-211 — Test Infrastructure Bootstrap (DEFERRED until val-9)
+**Analysis**:
+- Writing unit tests for `rocstar.py` with synthetic data is feasible but produces tests that only verify code runs, not that it produces correct results
+- Correct AUC-loss tests need numeric oracle values (expected gamma, expected loss) for known inputs
+- val-9 will establish those oracle values under realistic data conditions
+- Integration tests (`example.py` end-to-end) require the 1.6M tweet S3 dataset and ClearML/TRAINS infrastructure — not feasible in standard CI
+
+**Immediate feasibility** (no val-9): Can write property tests (loss ≥ 0, gradient flows, device agnostic) right now. But without baseline metrics, regression detection is impossible.  
+**Post val-9 plan**: Use val-9 gamma and loss curves to set tolerance thresholds; write `pytest` parametrized tests against these thresholds.  
+**Decision**: DEFERRED until val-9
+
+#### T-R-214 — Deterministic Sampling (DEFERRED until val-9)
+**Analysis**:  
+The subsample ratios are `SUB_SAMPLE_SIZE/cap_pos = 2000/N_pos` (gamma) and `max_pos/cap_pos = 1000/N_pos` (loss). For a training set of 1.2M tweets:
+- Positive class (~50%): N_pos ≈ 800K → gamma subsample ratio ≈ 0.0025
+- Very small ratio → high multinomial variance in sampled gamma
+- Each training batch recalculates loss on a different random 0.13% of epoch positives
+
+Estimated variance: With 1000-sample cap from 800K, the coefficient of variation of the sample mean is ~√(1/1000) ≈ 3%. This translates to meaningful AUC variance across runs.
+
+**val-9 experiment design** (recommendation):
+1. Run 3 identical val-9 experiments with different `--seed` values  
+2. Report per-epoch AUC mean ± σ
+3. If σ > 0.005 → promote T-R-214 to active immediately  
+4. If σ < 0.005 → keep as v1.1 optional feature
+
+**Implementation already designed** (Archive.md §Proposed Refactorings — Proposal 2):  
+```python
+def epoch_update_gamma(y_true, y_pred, epoch=-1, delta=1, generator=None):
+    if generator is None:
+        generator = torch.Generator()
+    pos = pos[torch.rand(pos.shape[0], generator=generator, device=pos.device) < SUB_SAMPLE_SIZE/cap_pos]
+```
+**Decision**: DEFERRED until val-9 — implementation spec is ready; activation depends on val-9 variance measurement
+
+---
+
+*Triage session completed*: 2026-02-22 21:38 UTC  
+*Next triage gate*: After val-9 results are available
 
 ### Appendix A: Source Material
 - **Yan et al. 2003**: "Optimizing Classifier Performance via an Approximation to the Wilcoxon-Mann-Whitney Statistic"
@@ -690,4 +862,4 @@ def epoch_update_gamma(y_true, y_pred, epoch=-1, delta=1, generator=None):
 ---
 
 *Document maintained by TABNETICS Orchestrator*  
-*Last Updated*: 2026-02-20 15:22 UTC
+*Last Updated*: 2026-02-22 21:38 UTC

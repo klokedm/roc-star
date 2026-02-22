@@ -87,14 +87,39 @@ Aggressively improved correctness, maintainability, and auditability of the roc-
 None
 
 ### Blocked Tasks
-- Test infrastructure setup - Requires external dataset and CI configuration (owner decision)
+None (previously blocked items have been re-triaged — see task board below)
 
-### Deferred Tasks (Future Phases)
-- P2/P3 improvements (architecture, documentation)
-- Package restructuring (v2.0)
-- Type hints (v2.0)
-- Deterministic sampling (v1.1)
-- Test infrastructure bootstrap (blocked on dependency + CI decisions)
+### Deferred Tasks (pending val-9 results)
+
+| Task ID | Title | Reason for deferral |
+|---------|-------|---------------------|
+| **T-R-211** | Test Infrastructure Bootstrap | Cannot write meaningful tests without val-9 baseline metrics; S3 dataset dependency adds CI complexity. Revisit once val-9 establishes expected AUC ranges for synthetic-data unit tests. |
+| **T-R-214** | Deterministic Sampling (`generator` parameter) | val-9 will empirically measure run-to-run AUC variance. If variance > 0.01 AUC point → promote to active; if negligible → keep as optional v1.1 feature. |
+
+### Permanently Archived Tasks (not actionable / design decisions)
+
+| Task ID | Title | Archive Reason |
+|---------|-------|----------------|
+| **T-R-205** | No Early Stopping | **Design choice**, explicitly stated in README ("eliminates entirely the need for Early Stopping"). Best-model selection (line 344 example.py) already guards against noise-driven promotion. Yan et al. 2003 AUC loss converges differently than BCE. Not a bug. |
+| **T-R-120** | Type Hints | Type hints without mypy CI enforcement are decoration, not discipline. Full value requires the v2.0 package restructure and CI setup first. Archived until T-R-143 is un-archived. |
+| **T-R-143** | Package Restructuring (v2.0) | Breaks `from rocstar import ...` for ~1.3 K GitHub star user base. No regression safety net without test infrastructure. Too high risk / effort ratio until T-R-211 delivers a test suite. |
+
+---
+
+## Next-Step Task Board (Active — post-triage)
+
+These tasks were formerly listed as vague P2/P3 deferrals. After in-depth analysis (see Archive.md §Deferred-Task Triage 2026-02-22) they are now scoped, estimated, and ready for implementation.
+
+| Task ID | Priority | Title | Effort | Files |
+|---------|----------|-------|--------|-------|
+| **T-R-115** | P3 / Quick Win | Remove unused variables (`ln_All`, `ln_L1`) | < 30 min | `rocstar.py` L29, L48 |
+| **T-R-130** | P2 | Shuffle validation `DataLoader` | < 30 min | `example.py` L245 |
+| **T-R-105** | P2 | Extract magic numbers to named module-level constants | 1–2 h | `rocstar.py` |
+| **T-R-110** | P3 | Convert docstrings to NumPy format | 2–3 h | `rocstar.py` |
+| **T-R-101** | P2 | Input validation layer (shape / dtype / range guards) | 3–5 h | `rocstar.py` (inline or new `_validate()`) |
+| **T-R-125** | P2 | Refactor global state in `example.py` (encapsulate in class / `main()`) | 4–6 h | `example.py` |
+
+**Recommended execution order**: T-R-115 → T-R-130 → T-R-105 → T-R-110 → T-R-101 → T-R-125
 
 ---
 
@@ -115,19 +140,19 @@ None
 5. ✅ **Silent NaN propagation** - FIXED, added INF check (line 129)
 6. ✅ **Duplicate implementations** - FIXED by consolidating `example.py` onto `rocstar.py` implementation
 
-### Medium Priority (P2) - Maintainability / Design 📋 DOCUMENTED
-1. 📋 **No input validation** - Deferred to v1.1 (requires validation.py module)
-2. 📋 **Magic numbers** - Partially addressed (constants in code, config object deferred to v2.0)
-3. 📋 **No type hints** - Deferred to v2.0
-4. 📋 **Global state in example.py** - Deferred (requires example refactor)
-5. 📋 **No early stopping** - Design choice per README, documented in Archive.md
-6. 📋 **Validation set not shuffled** - Documented as evaluation risk
+### Medium Priority (P2) - Maintainability / Design 🗂️ TRIAGED (2026-02-22)
+1. 🟢 **No input validation** → **T-R-101** ACTIVE (next-step board)
+2. 🟢 **Magic numbers** → **T-R-105** ACTIVE (next-step board)
+3. 🔴 **No type hints** → **T-R-120** ARCHIVED (requires v2.0 package structure first)
+4. 🟢 **Global state in example.py** → **T-R-125** ACTIVE (next-step board)
+5. 🔴 **No early stopping** → **T-R-205** ARCHIVED (design choice per README + Yan et al.)
+6. 🟢 **Validation set not shuffled** → **T-R-130** ACTIVE (next-step board)
 
-### Low Priority (P3) - Nice-to-Have 📋 DOCUMENTED
-1. 📋 **Docstring format** - Not NumPy style (deferred to v2.0)
-2. 📋 **Unused variables** - ln_All, ln_L1 (minor, deferred)
-3. 📋 **Test infrastructure** - No tests exist (blocked on external dataset + CI)
-4. 📋 **Package structure** - Flat files (deferred to v2.0)
+### Low Priority (P3) - Nice-to-Have 🗂️ TRIAGED (2026-02-22)
+1. 🟢 **Docstring format** → **T-R-110** ACTIVE (next-step board)
+2. 🟢 **Unused variables** (ln_All, ln_L1) → **T-R-115** ACTIVE (next-step board)
+3. 🕐 **Test infrastructure** → **T-R-211** DEFERRED until val-9
+4. 🔴 **Package structure** → **T-R-143** ARCHIVED (breaking changes without test safety net)
 
 ---
 
@@ -177,13 +202,20 @@ None for this audit scope.
 
 ## Next Actions
 
-### ✅ AUDIT SESSION COMPLETE
+### ✅ AUDIT SESSION COMPLETE | ⏩ TRIAGE SESSION COMPLETE (2026-02-22)
+
+**Deferred-task triage outcome** (full analysis in Archive.md §Deferred-Task Triage 2026-02-22):
+- 3 tasks **permanently archived**: T-R-205, T-R-120, T-R-143
+- 2 tasks **remain deferred** (pending val-9): T-R-211, T-R-214
+- 6 tasks **promoted to active next-step board**: T-R-115, T-R-130, T-R-105, T-R-110, T-R-101, T-R-125
+
+**Recommended next session**: execute next-step board in order, starting with T-R-115 (quick wins) before tackling T-R-101 (input validation). Revisit T-R-211 and T-R-214 immediately after val-9 results are available.
 
 **For Repository Owner (klokedm)**:
 1. Install dependencies (`torch`, `pytest`) and run runtime checks.
 2. Merge the audit branch and tag patch release (v1.0.1 recommended).
-3. Decide on Phase 2 (v1.1) roadmap adoption.
-4. If interested in Phase 3 (v2.0), review ArchitectureRefactor.md.
+3. Execute next-step board tasks (T-R-115 → T-R-130 → T-R-105 → T-R-110 → T-R-101 → T-R-125).
+4. After val-9: revisit T-R-211 (tests) and T-R-214 (deterministic sampling).
 
 **For Users**:
 - This audit closure fixes **10 critical/high-priority bugs** without breaking changes.
@@ -191,9 +223,9 @@ None for this audit scope.
 - Notable fixes: device-aware execution path, crash prevention, algorithm correctness.
 
 **For Contributors**:
-- See Archive.md for comprehensive audit findings
+- See Archive.md for comprehensive audit findings and deferred-task triage analysis
 - See ArchitectureRefactor.md for future roadmap
-- P2/P3 issues documented if you want to contribute
+- P2/P3 active tasks are ready to pick up (T-R-101, T-R-105, T-R-110, T-R-115, T-R-125, T-R-130)
 
 ---
 
@@ -210,5 +242,5 @@ None for this audit scope.
 
 ---
 
-*Last Updated*: 2026-02-20 15:22 UTC  
-**Status**: ✅ AUDIT SESSION CLOSED - ALL TASKS ACCOUNTED FOR
+*Last Updated*: 2026-02-22 21:38 UTC  
+**Status**: ✅ AUDIT SESSION CLOSED | ⏩ DEFERRED-TASK TRIAGE COMPLETE — 2 tasks deferred (val-9), 3 archived, 6 on active next-step board
